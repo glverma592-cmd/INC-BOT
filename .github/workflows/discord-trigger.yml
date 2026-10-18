@@ -1,0 +1,77 @@
+name: Discord -> GitHub -> Discord
+
+# Kaise chalta hai:
+#   Discord webhook URL  -->  GitHub repo (repository_dispatch)  -->  automation chalta hai
+#   -->  result wapas Discord channel me post ho jaata hai
+#
+# Setup (ek baar):
+#   1. Repo me Secrets add karo:
+#        DISCORD_WEBHOOK  = https://discord.com/api/webhooks/xxxx/yyyy
+#        DISPATCH_TOKEN   = PAT (classic, repo scope) ya fine-grained PAT with Contents:Read/Write
+#   2. Discord me se trigger karne ka command (kahin se bhi chala sakte ho):
+#        curl -X POST https://api.github.com/repos/OWNER/REPO/dispatches \
+#          -H "Authorization: Bearer $DISPATCH_TOKEN" \
+#          -H "Accept: application/vnd.github+json" \
+#          -d '{"event_type":"run-job","client_payload":{"task":"hello from discord"}}'
+
+on:
+  repository_dispatch:
+    types: [run-job]
+  workflow_dispatch:            # manual "Run workflow" button bhi rakha hai
+    inputs:
+      task:
+        description: "Kya kaam karna hai"
+        default: "manual test"
+  schedule:
+    - cron: "0 3 * * *"         # roz 03:00 UTC (08:30 IST) — zaroorat na ho to hata do
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run the actual work
+        id: work
+        run: |
+          TASK="${{ github.event.client_payload.task || inputs.task || 'scheduled run' }}"
+          echo "task=$TASK" >> "$GITHUB_OUTPUT"
+          # <<< YAHAN apna automation lagao >>>
+          python3 - <<'PY'
+          import json, pathlib, datetime
+          out = {
+            "status": "ok",
+            "time_utc": datetime.datetime.now(datetime.UTC).isoformat(),
+            "note": "yahan apna result daalo"
+          }
+          pathlib.Path("result.json").write_text(json.dumps(out, indent=2))
+          print(json.dumps(out))
+          PY
+
+      - name: Notify Discord
+        if: always()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          TASK: ${{ steps.work.outputs.task }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          COLOR=5763719; [ "$JOB_STATUS" = "success" ] && COLOR=5814783 || COLOR=15548997
+          RESULT=$(head -c 800 result.json 2>/dev/null || echo "no output")
+          jq -n \
+            --arg title "GitHub job: $JOB_STATUS" \
+            --arg desc "**Task:** $TASK
+          **Result:**
+          \`\`\`json
+          $RESULT
+          \`\`\`" \
+            --arg url "$RUN_URL" \
+            --argjson color "$COLOR" \
+            '{embeds:[{title:$title, description:$desc, color:$color, url:$url, footer:{text:"GitHub Actions"}}]}' \
+          | curl -s -X POST -H "Content-Type: application/json" -d @- "$DISCORD_WEBHOOK"

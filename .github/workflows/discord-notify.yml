@@ -1,0 +1,119 @@
+name: Discord Notifications
+
+# GitHub events -> Discord channel (webhook)
+# Secret required: DISCORD_WEBHOOK
+
+on:
+  push:
+  pull_request:
+    types: [opened, closed, reopened]
+  issues:
+    types: [opened, closed, reopened]
+  release:
+    types: [published]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"   # 03:00 UTC = 08:30 IST — daily ping
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build Discord payload
+        id: payload
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # push
+          REF: ${{ github.ref_name }}
+          COMMITS: ${{ toJSON(github.event.commits.*.message) }}
+          COMPARE: ${{ github.event.compare }}
+          # pull_request
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          # issues
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          # release
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+        run: |
+          set -euo pipefail
+
+          COLOR=3447003
+          case "$EVENT" in
+            push)
+              N=$(printf '%s' "$COMMITS" | jq 'length')
+              MSG=$(printf '%s' "$COMMITS" | jq -r '.[0:3][] | "• " + (split("\n")[0])' | head -c 600)
+              TITLE="Push: $N commit(s) on \`$REF\`"
+              DESC="**By:** $ACTOR
+          $MSG
+          [View changes]($COMPARE)"
+              COLOR=5814783
+              URL="$COMPARE"
+              ;;
+            pull_request)
+              if [ "$ACTION" = "closed" ] && [ "$PR_MERGED" = "true" ]; then
+                TITLE="PR merged: $PR_TITLE"; COLOR=5814783
+              elif [ "$ACTION" = "closed" ]; then
+                TITLE="PR closed: $PR_TITLE"; COLOR=15548997
+              else
+                TITLE="PR $ACTION: $PR_TITLE"; COLOR=16776960
+              fi
+              DESC="**By:** $ACTOR"
+              URL="$PR_URL"
+              ;;
+            issues)
+              [ "$ACTION" = "closed" ] && COLOR=5814783 || COLOR=16776960
+              TITLE="Issue $ACTION: $ISSUE_TITLE"
+              DESC="**By:** $ACTOR"
+              URL="$ISSUE_URL"
+              ;;
+            release)
+              TITLE="Release: $RELEASE_NAME"; COLOR=10181046
+              DESC="**By:** $ACTOR"
+              URL="$RELEASE_URL"
+              ;;
+            schedule)
+              TITLE="Daily run ($REPO)"; COLOR=3447003
+              DESC="Scheduled job ran at $(date -u +'%Y-%m-%d %H:%M UTC')"
+              URL="$RUN_URL"
+              ;;
+            *)
+              TITLE="$EVENT $ACTION ($REPO)"; DESC="**By:** $ACTOR"; URL="$RUN_URL"
+              ;;
+          esac
+
+          jq -n \
+            --arg title "$TITLE" \
+            --arg desc "$DESC" \
+            --arg url "$URL" \
+            --arg footer "$REPO • $EVENT" \
+            --argjson color "$COLOR" \
+            '{username:"GitHub", embeds:[{title:$title, description:$desc, color:$color, url:$url, footer:{text:$footer}, timestamp:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}]}' \
+            > payload.json
+          echo "payload_bytes=$(wc -c < payload.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Send to Discord
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DISCORD_WEBHOOK:-}" ]; then
+            echo "::error::DISCORD_WEBHOOK secret is not set"; exit 1
+          fi
+          # 3 retries with backoff (Discord rate limit = 5 req / 2s per webhook)
+          for i in 1 2 3; do
+            CODE=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
+              -H "Content-Type: application/json" -d @payload.json "$DISCORD_WEBHOOK")
+            if [ "$CODE" = "200" ] || [ "$CODE" = "204" ]; then
+              echo "Discord OK (HTTP $CODE)"; exit 0
+            fi
+            echo "attempt $i failed: HTTP $CODE — $(head -c 200 /tmp/resp.txt)"
+            sleep $((i * 3))
+          done
+          echo "::error::Discord delivery failed after 3 attempts"; exit 1
