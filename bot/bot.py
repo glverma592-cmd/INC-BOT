@@ -85,16 +85,20 @@ async def on_member_join(member: discord.Member):
         log.info("DM sent -> %s (%s)", member, member.id)
     except discord.Forbidden:
         log.warning("DM blocked by %s", member)
-        await _fallback(member)
-    except: log.error("DM fail %s\n%s", member, traceback.format_exc()); await _fallback(member)
+        await _fallback_post(member, "DM nahi ja paya (user ne DM block kiya hai)")
+    except Exception:
+        log.error("DM fail %s\n%s", member, traceback.format_exc())
+        await _fallback_post(member, "DM nahi ja paya")
 
-async def _fallback(member: discord.Member):
+async def _fallback_post(member: discord.Member, reason: str = ""):
     if not WELCOME_CHANNEL_ID: return
     ch=member.guild.get_channel(WELCOME_CHANNEL_ID)
     if ch is None: return
     text=DM_TEXT.format(user=member.mention, guild=member.guild.name, count=member.guild.member_count)
     try: await ch.send(text, view=VerifyButton() if REQUIRE_VERIFY else None)
-    except: pass
+    except Exception: pass
+
+_fallback = _fallback_post
 
 # ---- SLASH COMMANDS ----
 @bot.tree.command(name="ping", description="Bot ka latency check karo")
