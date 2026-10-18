@@ -24,3 +24,9 @@ cp .env.example .env
 pip install -r requirements.txt
 python bot.py
 ```
+
+## Hosting (BotKeep / Render)
+- Repository: `glverma592-cmd/INC-BOT`, Branch: `main`
+- Install: `pip install -r requirements.txt`
+- Start: `python main.py`
+- Env: `DISCORD_BOT_TOKEN`, `WELCOME_CHANNEL_ID=1559886513423257610`, `VERIFY_ROLE_ID=0`, `REQUIRE_VERIFY=0`
