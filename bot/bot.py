@@ -69,6 +69,12 @@ async def setup_hook():
 async def on_ready():
     log.info("logged in as %s (id=%s) — %s guilds", bot.user, bot.user.id, len(bot.guilds))
     log.info("verify=%s port=%s", REQUIRE_VERIFY, HTTP_PORT)
+    # guild sync for instant commands
+    for g in bot.guilds:
+        try:
+            await bot.tree.sync(guild=g)
+            log.info("guild %s (%s) synced", g.name, g.id)
+        except Exception as e: log.warning("guild %s sync fail: %s", g.id, e)
 
 @bot.event
 async def on_member_join(member: discord.Member):
