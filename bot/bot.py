@@ -134,8 +134,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="ℹ️ Jankari", value="`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo`", inline=False)
     embed.add_field(name="🎉 Utility", value="`/poll` `/remind` `/help`", inline=False)
     embed.add_field(name="🤖 AI Chat", value="`/ask sawal` ya bot ko @mention karke kuch bhi puch lo", inline=False)
-    embed.add_field(name="🎨 AI Images", value="`/image kya banana hai` (tasveer) • `/poster tournament theme` (poster)", inline=False)
-    embed.add_field(name="✨ Designing", value="`/design kya design karna hai` (AI design + Canva link) • `/logo team style` (logo) • `/thumbnail title game` (YT thumbnail)", inline=False)
+    embed.add_field(name="🎨 AI Image", value="`/image kya banana hai` — bas ye ek hi image wala command hai", inline=False)
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -463,83 +462,6 @@ async def image_cmd(interaction: discord.Interaction, vivaran: str):
         await interaction.followup.send("⚠️ Image nahi ban payi — thodi der baad fir try karna.")
         return
     await interaction.followup.send(content=f"🎨 **{interaction.user.display_name}** ke liye: {vivaran}", file=discord.File(io.BytesIO(data), filename="ai-image.jpg"))
-
-@bot.tree.command(name="poster", description="Tournament ka poster bano — title aur theme likho")
-@app_commands.describe(title="Tournament ka naam/title", theme="Poster kaisa dikhe (jaise: neon purple, aag wala, jungle)")
-async def poster_cmd(interaction: discord.Interaction, title: str, theme: str):
-    now=time.time()
-    if now - _image_cooldown.get(interaction.user.id, 0) < 15:
-        await interaction.response.send_message("⏳ Poster me time lagta hai — 15 second ruk ke fir bano.", ephemeral=True); return
-    _image_cooldown[interaction.user.id]=now
-    await interaction.response.defer()
-    try:
-        data=await _make_image(f"epic esports gaming tournament poster background, {theme}, heroic gamers, dramatic cinematic lighting, space for title text, no text, no words, no letters")
-    except Exception:
-        log.error("poster fail\n%s", traceback.format_exc())
-        await interaction.followup.send("⚠️ Poster nahi ban paya — thodi der baad fir try karna.")
-        return
-    embed=discord.Embed(title=f"🏆 {title}", description="Poster taiyaar hai! Naam upar embed me hai — image ko download karke Canva me title daal lena, wahi sabse saaf aayega.", color=0x9b59b6)
-    embed.set_image(url="attachment://poster.jpg")
-    embed.set_footer(text=f"Poster by {interaction.user.display_name}")
-    await interaction.followup.send(embed=embed, file=discord.File(io.BytesIO(data), filename="poster.jpg"))
-
-def _canva_link(query: str) -> str:
-    return "https://www.canva.com/templates/s/" + urllib.parse.quote(query.replace(" ", "-")) + "/"
-
-@bot.tree.command(name="design", description="AI se pura design bano — image + rang + Canva ready link")
-@app_commands.describe(kya="Kya design karna hai (jaise: BGMI tournament poster, aag wala theme)")
-async def design_cmd(interaction: discord.Interaction, kya: str):
-    now=time.time()
-    if now - _image_cooldown.get(interaction.user.id, 0) < 15:
-        await interaction.response.send_message("⏳ Design me time lagta hai — 15 second ruk ke fir bano.", ephemeral=True); return
-    _image_cooldown[interaction.user.id]=now
-    await interaction.response.defer()
-    try:
-        data=await _make_image(f"professional esports design background, {kya}, dramatic, vibrant, high quality, no text, no words, no letters")
-    except Exception:
-        log.error("design image fail\n%s", traceback.format_exc())
-        await interaction.followup.send("⚠️ Design image nahi bani — thodi der baad fir try karna.")
-        return
-    salah=await _ask_gemini(f"Is design ke liye sirf 5 line me do: 1 catchy title line, 2 line text, best rang (color palette), aur font style. Topic: {kya}")
-    link=_canva_link(kya+" poster")
-    embed=discord.Embed(title="✨ AI Design Taiyaar", description=f"**Topic:** {kya}\n\n{salah}\n\n🎨 Canva me aur sajana ho to ready design yahan milege: {link}", color=0x00c4cc)
-    embed.set_image(url="attachment://design.jpg")
-    embed.set_footer(text="Trick: Upar ki image Canva me upload karke usi pe title daal do — sabse saaf poster banta hai")
-    await interaction.followup.send(embed=embed, file=discord.File(io.BytesIO(data), filename="design.jpg"))
-
-@bot.tree.command(name="logo", description="Team ka logo bano")
-@app_commands.describe(team="Team ka naam", style="Logo kaisa dikhe (jaise: aag wala sher, neon, sunehra)")
-async def logo_cmd(interaction: discord.Interaction, team: str, style: str):
-    now=time.time()
-    if now - _image_cooldown.get(interaction.user.id, 0) < 15:
-        await interaction.response.send_message("⏳ Logo me time lagta hai — 15 second ruk ke fir bano.", ephemeral=True); return
-    _image_cooldown[interaction.user.id]=now
-    await interaction.response.defer()
-    try:
-        data=await _make_image(f"esports team logo emblem mascot, {style}, bold vector style, dark background, centered, no text, no words, no letters")
-    except Exception:
-        await interaction.followup.send("⚠️ Logo nahi ban paya — thodi der baad fir try karna.")
-        return
-    embed=discord.Embed(title=f"🦁 {team} — Logo", description=f"Style: {style}\nNaam ko Canva me is logo ke neeche apne font me daal lena, wahi professional lagega.", color=0xf1c40f)
-    embed.set_image(url="attachment://logo.jpg")
-    await interaction.followup.send(embed=embed, file=discord.File(io.BytesIO(data), filename="logo.jpg"))
-
-@bot.tree.command(name="thumbnail", description="YouTube thumbnail bano — video title likho")
-@app_commands.describe(title="Video ka title", game="Game ka naam (jaise BGMI, Free Fire, Valorant)")
-async def thumbnail_cmd(interaction: discord.Interaction, title: str, game: str):
-    now=time.time()
-    if now - _image_cooldown.get(interaction.user.id, 0) < 15:
-        await interaction.response.send_message("⏳ Thumbnail me time lagta hai — 15 second ruk ke fir bano.", ephemeral=True); return
-    _image_cooldown[interaction.user.id]=now
-    await interaction.response.defer()
-    try:
-        data=await _make_image(f"youtube gaming thumbnail background {game}, shocked excited gamer face, explosion, bold dramatic colors, high contrast, no text, no words")
-    except Exception:
-        await interaction.followup.send("⚠️ Thumbnail nahi ban paya — thodi der baad fir try karna.")
-        return
-    embed=discord.Embed(title=f"🎬 {title}", description=f"Game: {game}\nIs image pe Canva me bada title daalna — 3-4 shabd, peela/safed rang, kala kinara (outline). Wahi click layega.", color=0xe74c3c)
-    embed.set_image(url="attachment://thumbnail.jpg")
-    await interaction.followup.send(embed=embed, file=discord.File(io.BytesIO(data), filename="thumbnail.jpg"))
 
 @bot.tree.command(name="report", description="Kisi member ki report admin tak bhejo")
 @app_commands.describe(member="Kis ki report karni hai", reason="Kya galti ki usne")
