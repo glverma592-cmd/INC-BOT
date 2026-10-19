@@ -3,7 +3,7 @@ INC Bot — Auto-DM + Guild management
 Naya member -> DM + Verify button, /dmtest, /ping, /say, /announce, /clear + GitHub -> Discord bridge
 """
 from __future__ import annotations
-import asyncio, datetime, logging, os, random, time, traceback
+import asyncio, datetime, io, logging, os, random, time, traceback, urllib.parse
 from pathlib import Path
 import aiohttp, discord
 from aiohttp import web
@@ -134,6 +134,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="ℹ️ Jankari", value="`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo`", inline=False)
     embed.add_field(name="🎉 Utility", value="`/poll` `/remind` `/help`", inline=False)
     embed.add_field(name="🤖 AI Chat", value="`/ask sawal` ya bot ko @mention karke kuch bhi puch lo", inline=False)
+    embed.add_field(name="🎨 AI Images", value="`/image kya banana hai` (tasveer) • `/poster tournament theme` (poster)", inline=False)
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -426,6 +427,60 @@ async def on_message(message: discord.Message):
                     jawab=await _ask_gemini(sawal)
                 await message.reply(jawab)
     await bot.process_commands(message)
+
+_image_cooldown: dict[int, float] = {}
+
+async def _make_image(prompt: str) -> bytes:
+    """Free image generation (Pollinations) — koi key nahi chahiye. Free limit: ~1 image/45s, isliye 402 pe ek baar ruk ke dobara."""
+    url="https://image.pollinations.ai/prompt/"+urllib.parse.quote(prompt)+f"?width=1024&height=1024&nologo=true&seed={random.randint(1,999999)}"
+    async with aiohttp.ClientSession() as session:
+        for attempt in range(2):
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                if resp.status == 200:
+                    data=await resp.read()
+                    if len(data) < 5000:
+                        raise RuntimeError("image bohot chhoti aayi")
+                    return data
+                body=(await resp.text())[:200]
+                log.warning("image HTTP %s attempt %s: %s", resp.status, attempt, body)
+                if resp.status != 402 or attempt == 1:
+                    raise RuntimeError(f"image HTTP {resp.status}")
+            await asyncio.sleep(46)
+
+@bot.tree.command(name="image", description="AI se tasveer bano — kya banana hai likho")
+@app_commands.describe(vivaran="Tasveer me kya dikhe (jaise: BGMI soldier sunset pe)")
+async def image_cmd(interaction: discord.Interaction, vivaran: str):
+    now=time.time()
+    if now - _image_cooldown.get(interaction.user.id, 0) < 15:
+        await interaction.response.send_message("⏳ Image me time lagta hai — 15 second ruk ke fir bano.", ephemeral=True); return
+    _image_cooldown[interaction.user.id]=now
+    await interaction.response.defer()
+    try:
+        data=await _make_image(vivaran+", high quality, detailed, vibrant")
+    except Exception:
+        log.error("image fail\n%s", traceback.format_exc())
+        await interaction.followup.send("⚠️ Image nahi ban payi — thodi der baad fir try karna.")
+        return
+    await interaction.followup.send(content=f"🎨 **{interaction.user.display_name}** ke liye: {vivaran}", file=discord.File(io.BytesIO(data), filename="ai-image.jpg"))
+
+@bot.tree.command(name="poster", description="Tournament ka poster bano — title aur theme likho")
+@app_commands.describe(title="Tournament ka naam/title", theme="Poster kaisa dikhe (jaise: neon purple, aag wala, jungle)")
+async def poster_cmd(interaction: discord.Interaction, title: str, theme: str):
+    now=time.time()
+    if now - _image_cooldown.get(interaction.user.id, 0) < 15:
+        await interaction.response.send_message("⏳ Poster me time lagta hai — 15 second ruk ke fir bano.", ephemeral=True); return
+    _image_cooldown[interaction.user.id]=now
+    await interaction.response.defer()
+    try:
+        data=await _make_image(f"epic esports gaming tournament poster background, {theme}, heroic gamers, dramatic cinematic lighting, space for title text, no text, no words, no letters")
+    except Exception:
+        log.error("poster fail\n%s", traceback.format_exc())
+        await interaction.followup.send("⚠️ Poster nahi ban paya — thodi der baad fir try karna.")
+        return
+    embed=discord.Embed(title=f"🏆 {title}", description="Poster taiyaar hai! Naam upar embed me hai — image ko download karke Canva me title daal lena, wahi sabse saaf aayega.", color=0x9b59b6)
+    embed.set_image(url="attachment://poster.jpg")
+    embed.set_footer(text=f"Poster by {interaction.user.display_name}")
+    await interaction.followup.send(embed=embed, file=discord.File(io.BytesIO(data), filename="poster.jpg"))
 
 @bot.tree.command(name="report", description="Kisi member ki report admin tak bhejo")
 @app_commands.describe(member="Kis ki report karni hai", reason="Kya galti ki usne")
