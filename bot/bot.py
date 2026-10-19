@@ -73,9 +73,11 @@ async def setup_hook():
 async def on_ready():
     log.info("logged in as %s (id=%s) — %s guilds", bot.user, bot.user.id, len(bot.guilds))
     log.info("verify=%s port=%s", REQUIRE_VERIFY, HTTP_PORT)
-    # guild sync for instant commands
+    # guild sync for instant commands (global ko guild me copy karke — warna guild khali rehta hai)
     for g in bot.guilds:
         try:
+            try: bot.tree.copy_global_to(guild=g)
+            except Exception: pass
             await bot.tree.sync(guild=g)
             log.info("guild %s (%s) synced", g.name, g.id)
         except Exception as e: log.warning("guild %s sync fail: %s", g.id, e)
