@@ -31,6 +31,8 @@ VERIFY_ROLE_ID=int(os.environ.get("VERIFY_ROLE_ID","0") or 0)
 WELCOME_CHANNEL_ID=int(os.environ.get("WELCOME_CHANNEL_ID","0") or 0)
 DM_TEXT=os.environ.get("DM_TEXT","Hey {user} 👋\n\n**{guild}** me swagat hai!\n\n1. Pehle <#rules> padho\n2. Neeche **Verify** dabao\n3. Tabhi channels khulenge")
 REQUIRE_VERIFY=os.environ.get("REQUIRE_VERIFY","1")=="1"
+GEMINI_API_KEY=os.environ.get("GEMINI_API_KEY","")
+GEMINI_MODEL=os.environ.get("GEMINI_MODEL","gemini-3.1-flash-lite")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 log=logging.getLogger("autodm")
@@ -131,6 +133,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="📢 Announcement", value="`/say` `/announce` `/dm` `/report`", inline=False)
     embed.add_field(name="ℹ️ Jankari", value="`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo`", inline=False)
     embed.add_field(name="🎉 Utility", value="`/poll` `/remind` `/help`", inline=False)
+    embed.add_field(name="🤖 AI Chat", value="`/ask sawal` ya bot ko @mention karke kuch bhi puch lo", inline=False)
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -374,6 +377,55 @@ async def remind(interaction: discord.Interaction, minutes: int, text: str):
         try: await interaction.channel.send(f"⏰ {interaction.user.mention} Reminder: **{text}**")
         except Exception: pass
     asyncio.create_task(_later())
+
+_ask_cooldown: dict[int, float] = {}
+
+async def _ask_gemini(prompt: str) -> str:
+    if not GEMINI_API_KEY:
+        return "⚠️ AI set nahi hai — `GEMINI_API_KEY` Termux wali command me dalna bacha hai."
+    url=f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    payload={
+        "system_instruction": {"parts": [{"text": "Tum Hollow purple naam ke Discord bot ho. User jis bhasha me puche (Hinglish, Hindi ya English) usi me jawab do. Jawab saaf, kaam ka aur zyada se zyada 1800 characters me rakho."}]},
+        "contents": [{"parts": [{"text": prompt[:4000]}]}],
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=45)) as resp:
+                data=await resp.json()
+                if resp.status != 200:
+                    log.warning("Gemini HTTP %s: %s", resp.status, str(data)[:300])
+                    if resp.status == 429: return "⚠️ AI ki free limit abhi khatam ho gayi hai — thodi der baad fir try karna."
+                    if resp.status == 503: return "⚠️ AI abhi busy hai — ek min baad fir try karna."
+                    return "⚠️ AI se jawab nahi aaya — thodi der baad fir try karna."
+                return data["candidates"][0]["content"]["parts"][0]["text"][:1900]
+    except Exception:
+        log.error("Gemini fail\n%s", traceback.format_exc())
+        return "⚠️ AI tak baat nahi pahuchi — internet ya key check karke fir try karna."
+
+@bot.tree.command(name="ask", description="AI se kuch bhi puchho")
+@app_commands.describe(sawal="Kya puchna hai")
+async def ask_cmd(interaction: discord.Interaction, sawal: str):
+    now=time.time()
+    if now - _ask_cooldown.get(interaction.user.id, 0) < 5:
+        await interaction.response.send_message("⏳ 5 second ruk ke fir pucho.", ephemeral=True); return
+    _ask_cooldown[interaction.user.id]=now
+    await interaction.response.defer()
+    jawab=await _ask_gemini(sawal)
+    await interaction.followup.send(f"**{interaction.user.display_name}:** {sawal}\n\n{jawab}")
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot: return
+    if bot.user and bot.user in message.mentions:
+        sawal=message.content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
+        if sawal:
+            now=time.time()
+            if now - _ask_cooldown.get(message.author.id, 0) >= 5:
+                _ask_cooldown[message.author.id]=now
+                async with message.channel.typing():
+                    jawab=await _ask_gemini(sawal)
+                await message.reply(jawab)
+    await bot.process_commands(message)
 
 @bot.tree.command(name="report", description="Kisi member ki report admin tak bhejo")
 @app_commands.describe(member="Kis ki report karni hai", reason="Kya galti ki usne")
