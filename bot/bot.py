@@ -3,7 +3,7 @@ INC Bot — Auto-DM + Guild management
 Naya member -> DM + Verify button, /dmtest, /ping, /say, /announce, /clear + GitHub -> Discord bridge
 """
 from __future__ import annotations
-import asyncio, calendar, datetime, io, json, logging, os, random, time, traceback, urllib.parse
+import ast, asyncio, calendar, datetime, io, json, logging, operator, os, random, re, string, time, traceback, urllib.parse
 from pathlib import Path
 import aiohttp, discord
 from aiohttp import web
@@ -209,6 +209,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="👑 No Prefix (Owner Only)", value="`/noprefix` — granted member can chat with the AI without `/ask` or a mention. Power lasts **2 months**.", inline=False)
     embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • bot ko @mention karo • `/chatbot` (is channel me bina command baat) • `/chatbot_off` • `/chatbot_status`", inline=False)
     embed.add_field(name="🎨 AI Image", value="`/image kya banana hai` — bas ye ek hi image wala command hai", inline=False)
+    embed.add_field(name="✨ More Utility & Fun", value="`/invite` `/support` `/rules` `/suggest` `/coinflip` `/dice` `/choose` `/eightball` `/rps` `/calc` `/password` `/qr` `/color` `/emojiinfo` `/channelinfo` `/roles` `/banner` `/afk` `/snipe` `/timer`", inline=False)
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -768,6 +769,7 @@ _memory: dict[tuple[int, int], list] = {}
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot: return
+    await _process_afk_message(message)
     is_mention = bool(bot.user and bot.user in message.mentions)
     is_chatbot = message.channel.id in _chatbot_channels
     is_noprefix = _noprefix_active(message.author.id)
@@ -884,6 +886,360 @@ async def report(interaction: discord.Interaction, member: discord.Member, reaso
     embed.add_field(name="Wajah", value=reason, inline=False)
     await interaction.channel.send(embed=embed)
     await interaction.response.send_message("✅ Report admin tak bhej di.", ephemeral=True)
+
+# ---------------- 20 COMMON UTILITY & FUN COMMANDS ----------------
+_AFK_FILE = Path(__file__).resolve().parent / "afk.json"
+def _load_afk() -> dict[str, dict]:
+    try:
+        data=json.loads(_AFK_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+_afk_data: dict[str, dict] = _load_afk()
+_snipes: dict[int, dict] = {}
+def _save_afk():
+    try:
+        _AFK_FILE.write_text(json.dumps(_afk_data), encoding="utf-8")
+    except Exception:
+        log.warning("afk save fail\n%s", traceback.format_exc())
+def _afk_key(guild_id: int, user_id: int) -> str:
+    return f"{guild_id}:{user_id}"
+
+async def _process_afk_message(message: discord.Message):
+    """Bolne par khud ka AFK hataye, aur AFK member ko mention karne par bataye."""
+    if message.guild is None:
+        return
+    author_key=_afk_key(message.guild.id, message.author.id)
+    if author_key in _afk_data:
+        old_reason=_afk_data.pop(author_key, {}).get("reason", "")
+        _save_afk()
+        try:
+            await message.channel.send(f"👋 Welcome back, {message.author.mention}! Your AFK has been removed.", delete_after=6)
+        except Exception:
+            pass
+    seen=set()
+    for member in message.mentions:
+        if member.id == message.author.id or member.id in seen:
+            continue
+        seen.add(member.id)
+        info=_afk_data.get(_afk_key(message.guild.id, member.id))
+        if info:
+            try:
+                await message.channel.send(f"💤 {member.mention} is AFK: **{info.get('reason', 'AFK')}**", delete_after=8)
+            except Exception:
+                pass
+
+@bot.event
+async def on_message_delete(message: discord.Message):
+    if message.author and message.author.bot:
+        return
+    content=(message.content or "").strip()
+    attachments=[a.url for a in getattr(message, "attachments", [])]
+    if not content and attachments:
+        content="📎 " + "\n".join(attachments)
+    if not content:
+        return
+    _snipes[message.channel.id]={
+        "author_id": message.author.id if message.author else 0,
+        "author_name": str(message.author) if message.author else "Unknown",
+        "content": content[:1800],
+        "created_at": datetime.datetime.now(datetime.timezone.utc).timestamp(),
+    }
+
+_CALC_OPS={ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod, ast.Pow: operator.pow}
+def _calc_node(node):
+    if isinstance(node, ast.Expression):
+        return _calc_node(node.body)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        value=_calc_node(node.operand)
+        return value if isinstance(node.op, ast.UAdd) else -value
+    if isinstance(node, ast.BinOp) and type(node.op) in _CALC_OPS:
+        left=_calc_node(node.left); right=_calc_node(node.right)
+        if isinstance(node.op, ast.Pow) and (abs(left) > 1000 or abs(right) > 20):
+            raise ValueError("Power is too large")
+        result=_CALC_OPS[type(node.op)](left, right)
+        if isinstance(result, complex) or abs(result) > 10**100:
+            raise ValueError("Result is too large")
+        return result
+    raise ValueError("Only numbers and + - * / // % ** are allowed")
+def _safe_calc(expression: str):
+    if len(expression) > 120:
+        raise ValueError("Expression is too long")
+    return _calc_node(ast.parse(expression, mode="eval"))
+
+def _parse_hex_color(raw: str):
+    text=str(raw or "").strip().lower().lstrip("#")
+    if len(text) == 3 and all(ch in "0123456789abcdef" for ch in text):
+        text="".join(ch*2 for ch in text)
+    if len(text) != 6 or any(ch not in "0123456789abcdef" for ch in text):
+        raise ValueError("Invalid hex color")
+    rgb=tuple(int(text[i:i+2], 16) for i in (0, 2, 4))
+    return text, int(text, 16), rgb
+
+@bot.tree.command(name="invite", description="Get DIANA's invite link and this server's invite")
+async def invite_cmd(interaction: discord.Interaction):
+    app_id=bot.application_id or (bot.user.id if bot.user else 0)
+    bot_invite=f"https://discord.com/oauth2/authorize?client_id={app_id}&permissions=8&scope=bot%20applications.commands"
+    embed=discord.Embed(title="💌 Invite DIANA", description="Use the links below:", color=0x9b59b6)
+    embed.add_field(name="🤖 Add DIANA to a server", value=f"[Click here to invite DIANA]({bot_invite})", inline=False)
+    if interaction.guild and interaction.channel:
+        try:
+            inv=await interaction.channel.create_invite(max_age=0, max_uses=0, reason="Invite requested from DIANA")
+            embed.add_field(name="🏠 This server's invite", value=inv.url, inline=False)
+        except Exception:
+            embed.add_field(name="🏠 This server's invite", value="I could not create a server invite in this channel.", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="support", description="Get help and support information for DIANA")
+async def support_cmd(interaction: discord.Interaction):
+    owner_text="the bot owner"
+    try:
+        info=await bot.application_info()
+        owner_text=info.owner.mention
+    except Exception:
+        pass
+    embed=discord.Embed(title="🆘 DIANA Support", color=0x3498db)
+    embed.add_field(name="📋 Commands", value="Use `/help` to see every available command.", inline=False)
+    embed.add_field(name="👑 Bot Owner", value=owner_text, inline=False)
+    embed.add_field(name="🐞 Found a problem?", value="Use `/report` inside the server or contact the bot owner.", inline=False)
+    embed.set_footer(text="Please do not share passwords, OTPs, or bot tokens with anyone.")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="rules", description="Show the standard server rules")
+async def rules_cmd(interaction: discord.Interaction):
+    embed=discord.Embed(title="📜 Server Rules", color=0xe74c3c)
+    embed.description=(
+        "1️⃣ Be respectful with everyone.\n"
+        "2️⃣ No spam, advertising, or self-promotion without permission.\n"
+        "3️⃣ No abusive language, harassment, or hate speech.\n"
+        "4️⃣ Keep content safe and appropriate for the channel.\n"
+        "5️⃣ Do not share anyone's private information.\n"
+        "6️⃣ Follow Discord's Terms of Service and Community Guidelines.\n"
+        "7️⃣ Listen to admins and moderators."
+    )
+    embed.set_footer(text="Breaking the rules can lead to a warning, timeout, kick, or ban.")
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="suggest", description="Send a suggestion for the server")
+@app_commands.describe(idea="Write your suggestion")
+async def suggest_cmd(interaction: discord.Interaction, idea: str):
+    idea=idea.strip()
+    if not idea or len(idea) > 1000:
+        await interaction.response.send_message("❌ Please write a suggestion between 1 and 1000 characters.", ephemeral=True); return
+    embed=discord.Embed(title="💡 New Suggestion", description=idea, color=0xf1c40f)
+    embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+    embed.set_footer(text="Vote with 👍 or 👎")
+    await interaction.response.send_message(embed=embed)
+    msg=await interaction.original_response()
+    try:
+        await msg.add_reaction("👍"); await msg.add_reaction("👎")
+    except Exception:
+        pass
+
+@bot.tree.command(name="coinflip", description="Flip a coin — heads or tails")
+async def coinflip_cmd(interaction: discord.Interaction):
+    result=random.choice(["🪙 **Heads!**", "🪙 **Tails!**"])
+    await interaction.response.send_message(result)
+
+@bot.tree.command(name="dice", description="Roll one or more dice")
+@app_commands.describe(sides="How many sides? (2-1000)", rolls="How many dice? (1-10)")
+async def dice_cmd(interaction: discord.Interaction, sides: app_commands.Range[int, 2, 1000] = 6, rolls: app_commands.Range[int, 1, 10] = 1):
+    results=[random.randint(1, sides) for _ in range(rolls)]
+    text=", ".join(f"**{n}**" for n in results)
+    extra=f"\n➕ Total: **{sum(results)}**" if rolls > 1 else ""
+    await interaction.response.send_message(f"🎲 Dice result: {text}{extra}")
+
+@bot.tree.command(name="choose", description="Let DIANA choose one option for you")
+@app_commands.describe(options="Write options separated by commas, e.g. BGMI, Valorant, CODM")
+async def choose_cmd(interaction: discord.Interaction, options: str):
+    choices=[o.strip() for o in options.split(",") if o.strip()]
+    if len(choices) < 2:
+        await interaction.response.send_message("❌ Please give at least 2 options separated by commas.", ephemeral=True); return
+    await interaction.response.send_message(f"🤔 I choose: **{random.choice(choices)}**")
+
+@bot.tree.command(name="eightball", description="Ask the magic 8-ball a yes/no question")
+@app_commands.describe(question="Ask your question")
+async def eightball_cmd(interaction: discord.Interaction, question: str):
+    answers=["Yes, definitely! ✅", "No, not this time. ❌", "Most likely yes. 👍", "Very doubtful. 🤔", "Absolutely! 🔥", "Better ask again later. ⏳", "Signs point to yes. ✨", "Do not count on it. ⚠️"]
+    embed=discord.Embed(title="🎱 Magic 8-Ball", color=0x2c3e50)
+    embed.add_field(name="❓ Question", value=question[:1000], inline=False)
+    embed.add_field(name="🔮 Answer", value=random.choice(answers), inline=False)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="rps", description="Play Rock Paper Scissors with DIANA")
+@app_commands.describe(choice="Choose rock, paper, or scissors")
+@app_commands.choices(choice=[
+    app_commands.Choice(name="🪨 Rock", value="rock"),
+    app_commands.Choice(name="📄 Paper", value="paper"),
+    app_commands.Choice(name="✂️ Scissors", value="scissors"),
+])
+async def rps_cmd(interaction: discord.Interaction, choice: app_commands.Choice[str]):
+    user_choice=choice.value
+    bot_choice=random.choice(["rock", "paper", "scissors"])
+    icons={"rock": "🪨 Rock", "paper": "📄 Paper", "scissors": "✂️ Scissors"}
+    if user_choice == bot_choice:
+        result="🤝 It's a tie!"
+    elif (user_choice, bot_choice) in {("rock", "scissors"), ("scissors", "paper"), ("paper", "rock")}:
+        result="🏆 You win!"
+    else:
+        result="🤖 DIANA wins!"
+    await interaction.response.send_message(f"You chose **{icons[user_choice]}**\nDIANA chose **{icons[bot_choice]}**\n\n{result}")
+
+@bot.tree.command(name="calc", description="Calculate a maths expression safely")
+@app_commands.describe(expression="Example: 25*4+10 or (50+10)/2")
+async def calc_cmd(interaction: discord.Interaction, expression: str):
+    try:
+        result=_safe_calc(expression)
+    except ZeroDivisionError:
+        await interaction.response.send_message("❌ Division by zero is not possible.", ephemeral=True); return
+    except Exception:
+        await interaction.response.send_message("❌ Invalid calculation. Use only numbers and `+ - * / // % **` with brackets.", ephemeral=True); return
+    if isinstance(result, float) and result.is_integer():
+        result=int(result)
+    await interaction.response.send_message(f"🧮 `{expression}` = **{result}**")
+
+@bot.tree.command(name="password", description="Generate a strong random password (only you can see it)")
+@app_commands.describe(length="Password length (8-64)")
+async def password_cmd(interaction: discord.Interaction, length: app_commands.Range[int, 8, 64] = 16):
+    alphabet=string.ascii_letters+string.digits+"!@#$%^&*_-"
+    pwd="".join(random.SystemRandom().choice(alphabet) for _ in range(length))
+    await interaction.response.send_message(f"🔐 Your new password:\n`{pwd}`\n\nKeep it private and save it in a password manager.", ephemeral=True)
+
+@bot.tree.command(name="qr", description="Create a QR code for any text or link")
+@app_commands.describe(text="Text or link for the QR code")
+async def qr_cmd(interaction: discord.Interaction, text: str):
+    text=text.strip()
+    if not text or len(text) > 1000:
+        await interaction.response.send_message("❌ Please enter text/link between 1 and 1000 characters.", ephemeral=True); return
+    url="https://api.qrserver.com/v1/create-qr-code/?size=350x350&margin=10&data="+urllib.parse.quote(text)
+    embed=discord.Embed(title="🔳 QR Code", color=0x000000)
+    embed.set_image(url=url)
+    embed.set_footer(text="Scan this QR code with your phone camera.")
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="color", description="Show information about a hex colour")
+@app_commands.describe(hex_code="Example: FF5733 or #FF5733")
+async def color_cmd(interaction: discord.Interaction, hex_code: str):
+    try:
+        clean, value, (r, g, b)=_parse_hex_color(hex_code)
+    except ValueError:
+        await interaction.response.send_message("❌ Invalid colour. Example: `FF5733`", ephemeral=True); return
+    embed=discord.Embed(title=f"🎨 Colour #{clean.upper()}", color=value)
+    embed.add_field(name="HEX", value=f"#{clean.upper()}", inline=True)
+    embed.add_field(name="RGB", value=f"{r}, {g}, {b}", inline=True)
+    embed.add_field(name="More shades", value=f"[Open colour details](https://www.colorhexa.com/{clean})", inline=False)
+    embed.set_thumbnail(url=f"https://singlecolorimage.com/get/{clean}/300x300")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="emojiinfo", description="Show information about an emoji")
+@app_commands.describe(emoji="Paste any emoji")
+async def emojiinfo_cmd(interaction: discord.Interaction, emoji: str):
+    emoji=emoji.strip()
+    match=re.fullmatch(r"<(a?):([A-Za-z0-9_]+):(\d+)>", emoji)
+    embed=discord.Embed(title="😀 Emoji Information", color=0xf39c12)
+    if match:
+        animated=bool(match.group(1)); name=match.group(2); emoji_id=int(match.group(3))
+        ext="gif" if animated else "png"
+        url=f"https://cdn.discordapp.com/emojis/{emoji_id}.{ext}"
+        embed.add_field(name="Name", value=f":{name}:", inline=True)
+        embed.add_field(name="ID", value=str(emoji_id), inline=True)
+        embed.add_field(name="Animated", value="Yes" if animated else "No", inline=True)
+        embed.add_field(name="Created", value=discord.utils.snowflake_time(emoji_id).strftime("%d %b %Y"), inline=True)
+        embed.set_image(url=url)
+    elif emoji:
+        codepoints=" ".join(f"U+{ord(ch):04X}" for ch in emoji if not ch.isspace())
+        embed.add_field(name="Emoji", value=emoji[:100], inline=True)
+        embed.add_field(name="Unicode", value=codepoints[:1000] or "-", inline=False)
+    else:
+        await interaction.response.send_message("❌ Please paste an emoji.", ephemeral=True); return
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="channelinfo", description="Show information about a channel")
+@app_commands.describe(channel="Select a channel")
+async def channelinfo_cmd(interaction: discord.Interaction, channel: discord.abc.GuildChannel):
+    embed=discord.Embed(title=f"📺 #{getattr(channel, 'name', 'Channel')}", color=0x3498db)
+    embed.add_field(name="ID", value=str(channel.id), inline=True)
+    embed.add_field(name="Type", value=str(channel.type).title(), inline=True)
+    embed.add_field(name="Created", value=channel.created_at.strftime("%d %b %Y"), inline=True)
+    embed.add_field(name="Category", value=channel.category.name if getattr(channel, "category", None) else "None", inline=True)
+    embed.add_field(name="Position", value=str(getattr(channel, "position", "-")), inline=True)
+    topic=getattr(channel, "topic", None)
+    if topic:
+        embed.add_field(name="Topic", value=topic[:1000], inline=False)
+    if isinstance(channel, discord.VoiceChannel):
+        embed.add_field(name="Bitrate", value=f"{channel.bitrate//1000} kbps", inline=True)
+        embed.add_field(name="User Limit", value=str(channel.user_limit or "Unlimited"), inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="roles", description="Show all roles in this server")
+async def roles_cmd(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ This command works only inside a server.", ephemeral=True); return
+    roles=sorted(interaction.guild.roles, key=lambda r: r.position, reverse=True)
+    lines=[f"{r.mention} — {len(r.members)} member(s)" for r in roles if r.name != "@everyone"]
+    embed=discord.Embed(title=f"🎭 Roles in {interaction.guild.name}", color=0x9b59b6)
+    embed.description="\n".join(lines[:50])[:4000] or "No roles found."
+    if len(lines) > 50:
+        embed.set_footer(text=f"Showing 50 of {len(lines)} roles.")
+    else:
+        embed.set_footer(text=f"Total roles: {len(lines)}")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="banner", description="Show a member's profile banner")
+@app_commands.describe(member="Whose banner do you want to see? Leave blank for yourself")
+async def banner_cmd(interaction: discord.Interaction, member: discord.Member = None):
+    target=member or interaction.user
+    await interaction.response.defer(ephemeral=True)
+    banner_obj=getattr(target, "banner", None)
+    if banner_obj is None:
+        try:
+            fetched=await bot.fetch_user(target.id)
+            banner_obj=fetched.banner
+        except Exception:
+            banner_obj=None
+    if banner_obj is None:
+        await interaction.followup.send(f"ℹ️ {target.mention} has not set a profile banner.", ephemeral=True); return
+    embed=discord.Embed(title=f"🖼️ {target.display_name}'s Banner", color=0x9b59b6)
+    embed.set_image(url=banner_obj.url)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="afk", description="Set your AFK status")
+@app_commands.describe(reason="Why are you AFK? (optional)")
+async def afk_cmd(interaction: discord.Interaction, reason: str = "AFK"):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ AFK works only inside a server.", ephemeral=True); return
+    reason=(reason or "AFK").strip()[:200] or "AFK"
+    _afk_data[_afk_key(interaction.guild.id, interaction.user.id)]={
+        "reason": reason,
+        "since": datetime.datetime.now(datetime.timezone.utc).timestamp(),
+    }
+    _save_afk()
+    await interaction.response.send_message(f"💤 {interaction.user.mention} is now AFK: **{reason}**")
+
+@bot.tree.command(name="snipe", description="Show the most recently deleted message in this channel")
+async def snipe_cmd(interaction: discord.Interaction):
+    data=_snipes.get(interaction.channel.id) if interaction.channel else None
+    if not data:
+        await interaction.response.send_message("ℹ️ No deleted message has been recorded in this channel yet.", ephemeral=True); return
+    embed=discord.Embed(title="🎯 Last Deleted Message", description=data["content"], color=0xe67e22)
+    embed.add_field(name="Author", value=f"<@{data['author_id']}> ({data['author_name']})", inline=False)
+    embed.add_field(name="Recorded", value=f"<t:{int(data['created_at'])}:R>", inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="timer", description="Start a countdown timer")
+@app_commands.describe(minutes="How many minutes? (1-10080)", message="What should I say when time is over?")
+async def timer_cmd(interaction: discord.Interaction, minutes: app_commands.Range[int, 1, 10080], message: str = "Time is up!"):
+    message=message.strip()[:300] or "Time is up!"
+    await interaction.response.send_message(f"⏲️ Timer started for **{minutes} minute(s)**, {interaction.user.mention}. I will remind you here.")
+    async def _finish_timer():
+        await asyncio.sleep(minutes*60)
+        try:
+            await interaction.channel.send(f"⏰ {interaction.user.mention} **Timer finished!** {message}")
+        except Exception:
+            pass
+    asyncio.create_task(_finish_timer())
 
 # ---- GitHub -> Discord ----
 async def github_handler(request: web.Request):
