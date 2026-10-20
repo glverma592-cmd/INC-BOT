@@ -63,28 +63,32 @@ class VerifyButton(discord.ui.View):
 async def setup_hook():
     bot.add_view(VerifyButton())
     bot.add_view(GiveawayView())
-    # instant guild sync (global sync 1hr lagta hai)
+    # SIRF global sync — guild copies banaoge to Discord me har command 2-2 dikhega
     try:
-        # sync globally + per-guild for instant
         await bot.tree.sync()
-        for g in bot.guilds:
-            try: await bot.tree.sync(guild=g)
-            except: pass
-        log.info("slash commands synced (global + %s guilds)", len(bot.guilds))
+        log.info("slash commands synced (global only)")
     except Exception as e: log.warning("sync fail: %s", e)
 
 @bot.event
 async def on_ready():
     log.info("logged in as %s (id=%s) — %s guilds", bot.user, bot.user.id, len(bot.guilds))
     log.info("verify=%s port=%s", REQUIRE_VERIFY, HTTP_PORT)
-    # guild sync for instant commands (global ko guild me copy karke — warna guild khali rehta hai)
-    for g in bot.guilds:
+    # Purani guild-wise command copies saaf kar do — global 60 commands hi rahenge,
+    # warna Discord har command 2 baar dikhata hai (ek global + ek server copy)
+    if TOKEN and bot.user:
         try:
-            try: bot.tree.copy_global_to(guild=g)
-            except Exception: pass
-            await bot.tree.sync(guild=g)
-            log.info("guild %s (%s) synced", g.name, g.id)
-        except Exception as e: log.warning("guild %s sync fail: %s", g.id, e)
+            async with aiohttp.ClientSession() as sess:
+                for g in bot.guilds:
+                    try:
+                        url=f"https://discord.com/api/v10/applications/{bot.user.id}/guilds/{g.id}/commands"
+                        async with sess.put(url, headers={"Authorization": f"Bot {TOKEN}", "Content-Type": "application/json"}, json=[]) as resp:
+                            if resp.status not in (200, 201, 204):
+                                log.warning("guild %s duplicate-cleanup HTTP %s", g.id, resp.status)
+                    except Exception:
+                        pass
+            log.info("purane guild duplicate commands saaf kar diye")
+        except Exception:
+            log.warning("duplicate-cleanup fail\n%s", traceback.format_exc())
     _restore_giveaways()
 
 @bot.event
