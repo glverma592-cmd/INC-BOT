@@ -3,7 +3,7 @@ INC Bot — Auto-DM + Guild management
 Naya member -> DM + Verify button, /dmtest, /ping, /say, /announce, /clear + GitHub -> Discord bridge
 """
 from __future__ import annotations
-import asyncio, datetime, io, json, logging, os, random, time, traceback, urllib.parse
+import asyncio, calendar, datetime, io, json, logging, os, random, time, traceback, urllib.parse
 from pathlib import Path
 import aiohttp, discord
 from aiohttp import web
@@ -33,6 +33,7 @@ DM_TEXT=os.environ.get("DM_TEXT","Hey {user} 👋\n\n**{guild}** me swagat hai!\
 REQUIRE_VERIFY=os.environ.get("REQUIRE_VERIFY","1")=="1"
 GEMINI_API_KEY=os.environ.get("GEMINI_API_KEY","")
 GEMINI_MODEL=os.environ.get("GEMINI_MODEL","gemini-3.1-flash-lite")
+BOT_OWNER_ID=int(os.environ.get("BOT_OWNER_ID","0") or 0)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 log=logging.getLogger("autodm")
@@ -139,6 +140,46 @@ def _save_autoroles():
     except Exception:
         log.warning("autoroles save fail\n%s", traceback.format_exc())
 
+_NOPREFIX_FILE = Path(__file__).resolve().parent / "noprefix.json"
+def _load_noprefix() -> dict[int, float]:
+    try:
+        raw={int(k): float(v) for k, v in json.loads(_NOPREFIX_FILE.read_text(encoding="utf-8")).items()}
+    except Exception:
+        return {}
+    now_ts=datetime.datetime.now(datetime.timezone.utc).timestamp()
+    return {uid: exp for uid, exp in raw.items() if exp > now_ts}
+_noprefix: dict[int, float] = _load_noprefix()
+def _save_noprefix():
+    try:
+        _NOPREFIX_FILE.write_text(json.dumps({str(k): v for k, v in _noprefix.items()}), encoding="utf-8")
+    except Exception:
+        log.warning("noprefix save fail\n%s", traceback.format_exc())
+def _add_months(dt: datetime.datetime, months: int) -> datetime.datetime:
+    month_index=dt.month - 1 + months
+    year=dt.year + month_index // 12
+    month=month_index % 12 + 1
+    day=min(dt.day, calendar.monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
+def _noprefix_expiry(user_id: int):
+    exp=_noprefix.get(user_id)
+    if exp is None: return None
+    expiry=datetime.datetime.fromtimestamp(exp, datetime.timezone.utc)
+    if expiry <= datetime.datetime.now(datetime.timezone.utc):
+        _noprefix.pop(user_id, None); _save_noprefix(); return None
+    return expiry
+def _noprefix_active(user_id: int) -> bool:
+    return _noprefix_expiry(user_id) is not None
+async def _get_bot_owner_id() -> int:
+    if BOT_OWNER_ID: return BOT_OWNER_ID
+    if getattr(bot, "owner_id", None): return int(bot.owner_id)
+    try:
+        info=await bot.application_info()
+        bot.owner_id=info.owner.id
+        return int(info.owner.id)
+    except Exception:
+        log.error("bot owner check fail\n%s", traceback.format_exc())
+        return 0
+
 
 def _is_admin(interaction: discord.Interaction) -> bool:
     return bool(interaction.user.guild_permissions.administrator) if interaction.guild else False
@@ -162,6 +203,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="ℹ️ Jankari", value="`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo`", inline=False)
     embed.add_field(name="🎉 Utility", value="`/poll` `/remind` `/help`", inline=False)
     embed.add_field(name="🎭 Auto-Role", value="`/autorole_bot_add` (naya member join kare to khud role milega) • `/autorole_bot_remove` • `/autorole_bot_status`", inline=False)
+    embed.add_field(name="👑 No Prefix (Owner Only)", value="`/noprefix` — granted member can chat with the AI without `/ask` or a mention. Power lasts **2 months**.", inline=False)
     embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • bot ko @mention karo • `/chatbot` (is channel me bina command baat) • `/chatbot_off` • `/chatbot_status`", inline=False)
     embed.add_field(name="🎨 AI Image", value="`/image kya banana hai` — bas ye ek hi image wala command hai", inline=False)
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
@@ -485,7 +527,8 @@ async def on_message(message: discord.Message):
     if message.author.bot: return
     is_mention = bool(bot.user and bot.user in message.mentions)
     is_chatbot = message.channel.id in _chatbot_channels
-    if is_mention or is_chatbot:
+    is_noprefix = _noprefix_active(message.author.id)
+    if is_mention or is_chatbot or is_noprefix:
         if is_mention:
             sawal=message.content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
         else:
@@ -521,6 +564,38 @@ async def chatbot_status(interaction: discord.Interaction):
         await interaction.response.send_message("🤖 Is channel me chatbot **chalu** hai.", ephemeral=True)
     else:
         await interaction.response.send_message("🤖 Is channel me chatbot **band** hai. Chalu karna ho to admin `/chatbot` kare.", ephemeral=True)
+
+@bot.tree.command(name="noprefix", description="Owner only: grant, remove, or check No Prefix power (lasts 2 months)")
+@app_commands.describe(action="Add, remove, or check No Prefix power", member="Select the member")
+@app_commands.choices(action=[
+    app_commands.Choice(name="Add / renew (2 months)", value="add"),
+    app_commands.Choice(name="Remove", value="remove"),
+    app_commands.Choice(name="Status", value="status"),
+])
+async def noprefix_cmd(interaction: discord.Interaction, action: app_commands.Choice[str], member: discord.Member):
+    owner_id=await _get_bot_owner_id()
+    if interaction.user.id != owner_id:
+        await interaction.response.send_message("❌ Only the **bot owner** can use `/noprefix`.", ephemeral=True); return
+    op=action.value
+    if op == "add":
+        if member.bot:
+            await interaction.response.send_message("❌ No Prefix power cannot be given to a bot account.", ephemeral=True); return
+        expiry=_add_months(datetime.datetime.now(datetime.timezone.utc), 2)
+        _noprefix[member.id]=expiry.timestamp(); _save_noprefix()
+        await interaction.response.send_message(f"👑 No Prefix power given to {member.mention}.\n⏳ It will expire automatically on **{expiry.strftime('%d %b %Y')}**.\nNow they can simply type a message/question — no `/ask`, mention, or command prefix is needed.", ephemeral=True)
+    elif op == "remove":
+        if _noprefix.pop(member.id, None) is not None:
+            _save_noprefix()
+            await interaction.response.send_message(f"✅ No Prefix power removed from {member.mention}.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"ℹ️ {member.mention} does not currently have No Prefix power.", ephemeral=True)
+    else:
+        expiry=_noprefix_expiry(member.id)
+        if expiry:
+            days=max(0, (expiry - datetime.datetime.now(datetime.timezone.utc)).days)
+            await interaction.response.send_message(f"👑 {member.mention} has No Prefix power until **{expiry.strftime('%d %b %Y')}** ({days} days left).", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"ℹ️ {member.mention} does not currently have No Prefix power.", ephemeral=True)
 
 _image_cooldown: dict[int, float] = {}
 
