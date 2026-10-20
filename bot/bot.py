@@ -197,7 +197,7 @@ async def ping(interaction: discord.Interaction):
 
 @bot.tree.command(name="help", description="Show all bot commands")
 async def help_cmd(interaction: discord.Interaction):
-    embed=discord.Embed(title="🤖 Hollow purple — Commands", color=0x9b59b6)
+    embed=discord.Embed(title="🤖 DIANA — Commands", color=0x9b59b6)
     embed.add_field(name="🛡️ Admin / Moderation", value="`/kick` `/ban` `/unban` `/timeout` `/untimeout` `/warn` `/warnings` `/clearwarn` `/clear` `/slowmode` `/lock` `/unlock` `/role_add` `/role_remove` `/nickname`", inline=False)
     embed.add_field(name="📢 Announcement", value="`/say` `/announce` `/dm` `/report`", inline=False)
     embed.add_field(name="ℹ️ Jankari", value="`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo`", inline=False)
@@ -488,7 +488,7 @@ async def _ask_gemini(prompt: str, history=None) -> str:
         return "⚠️ AI is not configured yet — the `GEMINI_API_KEY` is missing."
     url=f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     payload={
-        "system_instruction": {"parts": [{"text": "You are Hollow purple, a Discord bot assistant. LANGUAGE RULE (highest priority): Always reply in clear English ONLY, no matter which language the user writes in (Hindi, Hinglish, Urdu, Spanish, or any other language). Even if the user asks you to reply in another language, still answer in English only. Understand the user's question in their language, but write your entire answer in English. Keep answers helpful, concise and under 1800 characters."}]},
+        "system_instruction": {"parts": [{"text": "You are DIANA, a Discord bot assistant. LANGUAGE RULE (highest priority): Always reply in clear English ONLY, no matter which language the user writes in (Hindi, Hinglish, Urdu, Spanish, or any other language). Even if the user asks you to reply in another language, still answer in English only. Understand the user's question in their language, but write your entire answer in English. Keep answers helpful, concise and under 1800 characters."}]},
         "contents": (history or []) + [{"role": "user", "parts": [{"text": "[Reply in English only.] " + prompt[:4000]}]}],
     }
     try:
