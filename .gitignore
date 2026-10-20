@@ -6,3 +6,4 @@ result.json
 .venv/
 bot/autoroles.json
 bot/noprefix.json
+bot/giveaways.json

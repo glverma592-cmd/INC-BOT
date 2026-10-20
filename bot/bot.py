@@ -62,6 +62,7 @@ class VerifyButton(discord.ui.View):
 @bot.event
 async def setup_hook():
     bot.add_view(VerifyButton())
+    bot.add_view(GiveawayView())
     # instant guild sync (global sync 1hr lagta hai)
     try:
         # sync globally + per-guild for instant
@@ -84,6 +85,7 @@ async def on_ready():
             await bot.tree.sync(guild=g)
             log.info("guild %s (%s) synced", g.name, g.id)
         except Exception as e: log.warning("guild %s sync fail: %s", g.id, e)
+    _restore_giveaways()
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -202,6 +204,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="📢 Announcement", value="`/say` `/announce` `/dm` `/report`", inline=False)
     embed.add_field(name="ℹ️ Jankari", value="`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo`", inline=False)
     embed.add_field(name="🎉 Utility", value="`/poll` `/remind` `/help`", inline=False)
+    embed.add_field(name="🎁 Giveaway", value="`/giveaway` — prize, time (jaise `30m`, `2h`, `1d`) aur winners set karke stylish giveaway start karo. Time khatam hote hi winner automatic announce hoga.", inline=False)
     embed.add_field(name="🎭 Auto-Role", value="`/autorole_bot_add` (naya member join kare to khud role milega) • `/autorole_bot_remove` • `/autorole_bot_status`", inline=False)
     embed.add_field(name="👑 No Prefix (Owner Only)", value="`/noprefix` — granted member can chat with the AI without `/ask` or a mention. Power lasts **2 months**.", inline=False)
     embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • bot ko @mention karo • `/chatbot` (is channel me bina command baat) • `/chatbot_off` • `/chatbot_status`", inline=False)
@@ -504,6 +507,246 @@ async def _ask_gemini(prompt: str, history=None) -> str:
     except Exception:
         log.error("Gemini fail\n%s", traceback.format_exc())
         return "⚠️ Could not reach the AI — please try again in a little while."
+
+# ---------------- GIVEAWAY SYSTEM ----------------
+_GIVEAWAY_FILE = Path(__file__).resolve().parent / "giveaways.json"
+def _load_giveaways() -> dict[int, dict]:
+    try:
+        return {int(k): v for k, v in json.loads(_GIVEAWAY_FILE.read_text(encoding="utf-8")).items()}
+    except Exception:
+        return {}
+_giveaways: dict[int, dict] = _load_giveaways()
+_giveaway_tasks: dict[int, asyncio.Task] = {}
+def _save_giveaways():
+    try:
+        _GIVEAWAY_FILE.write_text(json.dumps({str(k): v for k, v in _giveaways.items()}), encoding="utf-8")
+    except Exception:
+        log.warning("giveaways save fail\n%s", traceback.format_exc())
+
+def _parse_duration(raw: str) -> int:
+    """30m, 2h, 1d, 1d12h, 1w ya sirf 30 (=30 minutes) ko seconds me badlo."""
+    text=str(raw or "").strip().lower().replace(" ", "")
+    if not text:
+        raise ValueError("Duration is empty")
+    if text.isdigit():
+        seconds=int(text) * 60
+    else:
+        units={"w": 604800, "d": 86400, "h": 3600, "m": 60, "s": 1}
+        seconds=0
+        number=""
+        used=False
+        for ch in text:
+            if ch.isdigit():
+                number += ch
+            elif ch in units and number:
+                seconds += int(number) * units[ch]
+                number=""
+                used=True
+            else:
+                raise ValueError("Invalid duration")
+        if number or not used:
+            raise ValueError("Invalid duration")
+    if seconds < 60:
+        raise ValueError("Giveaway must be at least 1 minute long")
+    if seconds > 30 * 86400:
+        raise ValueError("Giveaway cannot be longer than 30 days")
+    return seconds
+
+def _format_duration(seconds: int) -> str:
+    parts=[]
+    for label, size in (("week", 604800), ("day", 86400), ("hour", 3600), ("minute", 60), ("second", 1)):
+        qty, seconds=divmod(int(seconds), size)
+        if qty:
+            parts.append(f"{qty} {label}{'s' if qty != 1 else ''}")
+    return ", ".join(parts[:2]) or "0 seconds"
+
+def _giveaway_embed(data: dict, ended: bool = False, winners: list[int] | None = None) -> discord.Embed:
+    ends_at=int(data.get("ends_at", 0))
+    entries=data.get("entries", [])
+    prize=str(data.get("prize", "Amazing Prize"))
+    if ended:
+        embed=discord.Embed(
+            title="🎉✦ GIVEAWAY ENDED ✦🎉",
+            description=f"## 🎁 {prize}\n\n━━━━━━━━━━━━━━━━━━━━",
+            color=0x95a5a6,
+        )
+        winner_text="\n".join(f"🏆 <@{uid}>" for uid in (winners or [])) or "😢 No valid entries"
+        embed.add_field(name="🏆 Winner(s)", value=winner_text, inline=False)
+        embed.add_field(name="👥 Total Entries", value=str(len(entries)), inline=True)
+        embed.add_field(name="⏰ Ended", value=f"<t:{ends_at}:R>", inline=True)
+    else:
+        embed=discord.Embed(
+            title="🎉✦ GIVEAWAY ✦🎉",
+            description=(
+                f"## 🎁 {prize}\n\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "🎉 **Press the green `Enter Giveaway` button below to participate!**\n"
+                "🍀 One click to enter — click again to leave.\n"
+                "━━━━━━━━━━━━━━━━━━━━"
+            ),
+            color=0xf1c40f,
+        )
+        embed.add_field(name="🏆 Prize", value=f"**{prize}**", inline=True)
+        embed.add_field(name="👑 Winners", value=str(data.get("winners_count", 1)), inline=True)
+        embed.add_field(name="👥 Entries", value=str(len(entries)), inline=True)
+        embed.add_field(name="⏰ Ends In", value=f"<t:{ends_at}:R>\n<t:{ends_at}:F>", inline=True)
+        embed.add_field(name="🎤 Hosted By", value=f"<@{data.get('host_id')}>", inline=True)
+        embed.add_field(name="⌛ Duration", value=_format_duration(max(0, ends_at-int(datetime.datetime.now(datetime.timezone.utc).timestamp()))), inline=True)
+    embed.set_footer(text="DIANA Giveaways • Good luck everyone! 🍀")
+    if bot.user:
+        try: embed.set_thumbnail(url=bot.user.display_avatar.url)
+        except Exception: pass
+    return embed
+
+class GiveawayView(discord.ui.View):
+    def __init__(self, entries: int = 0):
+        super().__init__(timeout=None)
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.label=f"Enter Giveaway • {entries}"
+
+    @discord.ui.button(label="Enter Giveaway • 0", style=discord.ButtonStyle.success, emoji="🎉", custom_id="diana:giveaway_enter")
+    async def enter_giveaway(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.message is None:
+            await interaction.response.send_message("⚠️ This giveaway message could not be found.", ephemeral=True); return
+        data=_giveaways.get(interaction.message.id)
+        if not data or data.get("ended"):
+            await interaction.response.send_message("⚠️ This giveaway has already ended.", ephemeral=True); return
+        if interaction.user.bot:
+            await interaction.response.send_message("🤖 Bot accounts cannot enter giveaways.", ephemeral=True); return
+        if interaction.user.id == data.get("host_id"):
+            await interaction.response.send_message("🎤 The giveaway host cannot enter their own giveaway.", ephemeral=True); return
+        entries=data.setdefault("entries", [])
+        if interaction.user.id in entries:
+            entries.remove(interaction.user.id)
+            _save_giveaways()
+            button.label=f"Enter Giveaway • {len(entries)}"
+            await interaction.response.edit_message(embed=_giveaway_embed(data), view=self)
+            await interaction.followup.send("↩️ You have left this giveaway.", ephemeral=True)
+        else:
+            entries.append(interaction.user.id)
+            _save_giveaways()
+            button.label=f"Enter Giveaway • {len(entries)}"
+            await interaction.response.edit_message(embed=_giveaway_embed(data), view=self)
+            await interaction.followup.send("🎉 You are in! Good luck! 🍀", ephemeral=True)
+
+async def _end_giveaway(message_id: int):
+    data=_giveaways.get(message_id)
+    if not data or data.get("ended"):
+        return
+    _giveaway_tasks.pop(message_id, None)
+    try:
+        channel=bot.get_channel(int(data.get("channel_id", 0)))
+        if channel is None:
+            channel=await bot.fetch_channel(int(data.get("channel_id", 0)))
+        message=await channel.fetch_message(message_id)
+    except Exception:
+        log.warning("giveaway %s ka channel/message nahi mila; record hata diya", message_id)
+        _giveaways.pop(message_id, None); _save_giveaways(); return
+
+    entries=[]
+    seen=set()
+    for uid in data.get("entries", []):
+        try: uid=int(uid)
+        except Exception: continue
+        if uid in seen or uid == data.get("host_id") or (bot.user and uid == bot.user.id):
+            continue
+        seen.add(uid); entries.append(uid)
+    data["entries"]=entries
+    winner_ids=random.sample(entries, min(int(data.get("winners_count", 1)), len(entries))) if entries else []
+    try:
+        await message.edit(embed=_giveaway_embed(data, ended=True, winners=winner_ids), view=None)
+    except Exception:
+        log.error("giveaway result embed edit fail\n%s", traceback.format_exc())
+    try:
+        if winner_ids:
+            mentions=" ".join(f"<@{uid}>" for uid in winner_ids)
+            await channel.send(
+                f"🎉 **GIVEAWAY RESULT!** 🎉\n\nCongratulations {mentions}! 🏆\nYou won **{data.get('prize')}**! 🎁\n\nHost: <@{data.get('host_id')}> — please contact the winner(s).",
+                allowed_mentions=discord.AllowedMentions(users=True),
+            )
+        else:
+            await channel.send(f"😢 **Giveaway ended!**\n\nNo valid entries were received for **{data.get('prize')}**, so there is no winner this time.")
+    except Exception:
+        log.error("giveaway result announcement fail\n%s", traceback.format_exc())
+    _giveaways.pop(message_id, None); _save_giveaways()
+    log.info("giveaway %s ended; winners=%s entries=%s", message_id, winner_ids, len(entries))
+
+async def _giveaway_wait(message_id: int):
+    try:
+        data=_giveaways.get(message_id)
+        if not data: return
+        delay=max(0.0, float(data.get("ends_at", 0)) - datetime.datetime.now(datetime.timezone.utc).timestamp())
+        if delay:
+            await asyncio.sleep(delay)
+        await _end_giveaway(message_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.error("giveaway wait fail\n%s", traceback.format_exc())
+    finally:
+        task=_giveaway_tasks.get(message_id)
+        if task is asyncio.current_task():
+            _giveaway_tasks.pop(message_id, None)
+
+def _schedule_giveaway(message_id: int):
+    task=_giveaway_tasks.get(message_id)
+    if task and not task.done(): return
+    try:
+        _giveaway_tasks[message_id]=asyncio.create_task(_giveaway_wait(message_id))
+    except RuntimeError:
+        pass
+
+def _restore_giveaways():
+    for message_id, data in list(_giveaways.items()):
+        if data.get("ended"):
+            _giveaways.pop(message_id, None)
+        else:
+            _schedule_giveaway(message_id)
+    _save_giveaways()
+
+@bot.tree.command(name="giveaway", description="Start a stylish giveaway — set the prize, duration, and number of winners")
+@app_commands.describe(prize="What are you giving away? (example: BGMI Royal Pass)", duration="How long? Examples: 30m, 2h, 1d, 1d12h — a plain number means minutes", winners="How many winners? (1-20)", channel="Where should the giveaway appear? Leave blank for this channel")
+async def giveaway_cmd(interaction: discord.Interaction, prize: str, duration: str, winners: app_commands.Range[int, 1, 20] = 1, channel: discord.TextChannel = None):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Giveaways can only be started inside a server.", ephemeral=True); return
+    if not _is_mod(interaction):
+        await interaction.response.send_message("❌ Only server admins/moderators can start a giveaway.", ephemeral=True); return
+    prize=prize.strip()
+    if not prize or len(prize) > 200:
+        await interaction.response.send_message("❌ Please enter a prize name between 1 and 200 characters.", ephemeral=True); return
+    try:
+        seconds=_parse_duration(duration)
+    except ValueError:
+        await interaction.response.send_message("❌ Invalid duration. Use examples: `30m`, `2h`, `1d`, `1d12h`, `1w` — or just `30` for 30 minutes. Minimum 1 minute, maximum 30 days.", ephemeral=True); return
+    target=channel or interaction.channel
+    if target is None:
+        await interaction.response.send_message("❌ Channel not found.", ephemeral=True); return
+    me=interaction.guild.me
+    perms=target.permissions_for(me) if me else None
+    if perms is None or not (perms.view_channel and perms.send_messages and perms.embed_links):
+        await interaction.response.send_message(f"❌ I do not have permission to post an embed giveaway in {target.mention}.", ephemeral=True); return
+
+    await interaction.response.defer(ephemeral=True)
+    ends_at=int(datetime.datetime.now(datetime.timezone.utc).timestamp()) + seconds
+    data={
+        "guild_id": interaction.guild.id,
+        "channel_id": target.id,
+        "host_id": interaction.user.id,
+        "prize": prize,
+        "winners_count": int(winners),
+        "ends_at": ends_at,
+        "entries": [],
+        "ended": False,
+    }
+    try:
+        message=await target.send(embed=_giveaway_embed(data), view=GiveawayView(0))
+    except Exception:
+        log.error("giveaway start fail\n%s", traceback.format_exc())
+        await interaction.followup.send("⚠️ Giveaway could not be started. Please check my channel permissions and try again.", ephemeral=True); return
+    data["message_id"]=message.id
+    _giveaways[message.id]=data; _save_giveaways(); _schedule_giveaway(message.id)
+    await interaction.followup.send(f"✅ **Giveaway started!** 🎉\n🎁 Prize: **{prize}**\n⏰ Duration: **{_format_duration(seconds)}**\n🏆 Winners: **{winners}**\n📍 {message.jump_url}", ephemeral=True)
 
 @bot.tree.command(name="ask", description="Ask the AI anything")
 @app_commands.describe(sawal="Kya puchna hai")
