@@ -768,15 +768,23 @@ async def ask_cmd(interaction: discord.Interaction, sawal: str):
     await interaction.followup.send(f"**{interaction.user.display_name}:** {sawal}\n\n{jawab}")
 
 _CHATBOT_FILE = Path(__file__).resolve().parent / "chatbot_channels.json"
-def _load_chatbot_channels() -> set[int]:
+def _load_chatbot_state():
+    """Purana format: [channel_id...] | Naya format: {channels: [...], master_on: true/false}"""
     try:
-        return {int(x) for x in json.loads(_CHATBOT_FILE.read_text(encoding="utf-8"))}
+        data=json.loads(_CHATBOT_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            channels={int(x) for x in data}
+            return channels, bool(channels)
+        if isinstance(data, dict):
+            channels={int(x) for x in data.get("channels", [])}
+            return channels, bool(data.get("master_on", bool(channels)))
     except Exception:
-        return set()
-_tag_chatbot_channels: set[int] = _load_chatbot_channels()
+        pass
+    return set(), False
+_tag_chatbot_channels, _tag_chatbot_master_on = _load_chatbot_state()
 def _save_chatbot_channels():
     try:
-        _CHATBOT_FILE.write_text(json.dumps(sorted(_tag_chatbot_channels)), encoding="utf-8")
+        _CHATBOT_FILE.write_text(json.dumps({"channels": sorted(_tag_chatbot_channels), "master_on": _tag_chatbot_master_on}), encoding="utf-8")
     except Exception:
         log.warning("chatbot channels save fail\n%s", traceback.format_exc())
 _memory: dict[tuple[int, int], list] = {}
@@ -786,7 +794,7 @@ async def on_message(message: discord.Message):
     if message.author.bot: return
     await _process_afk_message(message)
     is_mention = bool(bot.user and bot.user in message.mentions)
-    is_tag_chatbot = message.channel.id in _tag_chatbot_channels
+    is_tag_chatbot = _tag_chatbot_master_on and message.channel.id in _tag_chatbot_channels
     is_noprefix = _noprefix_active(message.author.id)
     if (is_mention and is_tag_chatbot) or is_noprefix:
         if is_mention:
@@ -810,30 +818,36 @@ async def on_message(message: discord.Message):
 @app_commands.describe(action="Choose On, Off, or Status — default is On")
 @app_commands.choices(action=[
     app_commands.Choice(name="On — reply only when DIANA is tagged", value="on"),
-    app_commands.Choice(name="Off — stop tag replies in this channel", value="off"),
+    app_commands.Choice(name="Off — stop tag replies everywhere", value="off"),
     app_commands.Choice(name="Status — check whether tag chat is on", value="status"),
 ])
 async def chatbot_on_cmd(interaction: discord.Interaction, action: str = "on"):
+    global _tag_chatbot_master_on
     if interaction.channel is None:
         await interaction.response.send_message("❌ Channel not found.", ephemeral=True); return
     if action in ("on", "off") and not _is_mod(interaction):
         await _deny(interaction); return
     if action == "on":
-        if interaction.channel.id in _tag_chatbot_channels:
+        if _tag_chatbot_master_on and interaction.channel.id in _tag_chatbot_channels:
             await interaction.response.send_message("🤖 Tag chat is already **ON** in this channel. Mention DIANA with your question and she will reply.", ephemeral=True); return
+        _tag_chatbot_master_on=True
         _tag_chatbot_channels.add(interaction.channel.id); _save_chatbot_channels()
-        await interaction.response.send_message("🤖 **Chatbot ON!** ✅\nFrom now on, DIANA will reply in this channel **only when someone tags/mentions her** with a question.\nExample: `@DIANA What is the capital of India?`\n\nUse `/chatbot_on` and choose **Off** to stop it.")
+        log.info("chatbot_on: tag chat ON in channel %s by %s", interaction.channel.id, interaction.user)
+        await interaction.response.send_message("🤖 **Chatbot ON!** ✅\nFrom now on, DIANA will reply in this channel **only when someone tags/mentions her** with a question.\nExample: `@DIANA What is the capital of India?`\n\nUse `/chatbot_on` and choose **Off** to stop tag replies everywhere.")
     elif action == "off":
-        if interaction.channel.id in _tag_chatbot_channels:
-            _tag_chatbot_channels.discard(interaction.channel.id); _save_chatbot_channels()
-            await interaction.response.send_message("🤖 Tag chat is now **OFF** in this channel. DIANA will not reply to mentions here.", ephemeral=True)
-        else:
-            await interaction.response.send_message("ℹ️ Tag chat is already OFF in this channel.", ephemeral=True)
+        if not _tag_chatbot_master_on and not _tag_chatbot_channels:
+            await interaction.response.send_message("ℹ️ Chatbot is already OFF everywhere.", ephemeral=True); return
+        _tag_chatbot_master_on=False
+        _tag_chatbot_channels.clear(); _save_chatbot_channels()
+        log.info("chatbot_on: tag chat OFF everywhere by %s", interaction.user)
+        await interaction.response.send_message("🤖 **Chatbot OFF kar diya hai — har jagah.** ✅\nAb DIANA kisi bhi channel me tag karne par reply nahi karegi. Wapas chalana ho to kisi channel me `/chatbot_on` chalakar **On** choose karna.", ephemeral=True)
     else:
-        if interaction.channel.id in _tag_chatbot_channels:
+        if _tag_chatbot_master_on and interaction.channel.id in _tag_chatbot_channels:
             await interaction.response.send_message("🤖 Tag chat is **ON** in this channel — DIANA replies when she is tagged/mentioned.", ephemeral=True)
+        elif _tag_chatbot_master_on and _tag_chatbot_channels:
+            await interaction.response.send_message("🤖 Tag chat is ON in another channel, but **OFF in this channel**.", ephemeral=True)
         else:
-            await interaction.response.send_message("🤖 Tag chat is **OFF** in this channel. An admin can start it with `/chatbot_on`.", ephemeral=True)
+            await interaction.response.send_message("🤖 Chatbot is **OFF everywhere**. An admin can start it with `/chatbot_on`.", ephemeral=True)
 
 @bot.tree.command(name="noprefix", description="Owner only: grant, remove, or check No Prefix power (lasts 2 months)")
 @app_commands.describe(action="Add, remove, or check No Prefix power", member="Select the member")
