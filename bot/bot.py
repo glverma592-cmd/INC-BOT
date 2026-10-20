@@ -122,11 +122,11 @@ def _is_mod(interaction: discord.Interaction) -> bool:
 async def _deny(interaction: discord.Interaction, msg="❌ Ye command sirf admins/mods ke liye hai."):
     await interaction.response.send_message(msg, ephemeral=True)
 
-@bot.tree.command(name="ping", description="Bot ka latency check karo")
+@bot.tree.command(name="ping", description="Check bot latency")
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message(f"🏓 Pong! `{round(bot.latency*1000)}ms`")
 
-@bot.tree.command(name="help", description="Bot ke saare commands ki list dekho")
+@bot.tree.command(name="help", description="Show all bot commands")
 async def help_cmd(interaction: discord.Interaction):
     embed=discord.Embed(title="🤖 Hollow purple — Commands", color=0x9b59b6)
     embed.add_field(name="🛡️ Admin / Moderation", value="`/kick` `/ban` `/unban` `/timeout` `/untimeout` `/warn` `/warnings` `/clearwarn` `/clear` `/slowmode` `/lock` `/unlock` `/role_add` `/role_remove` `/nickname`", inline=False)
@@ -138,7 +138,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="botinfo", description="Bot ki jankari dekho")
+@bot.tree.command(name="botinfo", description="Show bot information")
 async def botinfo(interaction: discord.Interaction):
     embed=discord.Embed(title="🤖 Bot Info", color=0x3498db)
     embed.add_field(name="Naam", value=str(bot.user), inline=True)
@@ -147,12 +147,12 @@ async def botinfo(interaction: discord.Interaction):
     embed.add_field(name="Commands", value=str(len(bot.tree.get_commands())), inline=True)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="uptime", description="Bot kitni der se online hai")
+@bot.tree.command(name="uptime", description="Show how long the bot has been online")
 async def uptime(interaction: discord.Interaction):
     sec=int(time.time()-START_TIME); d,sec=divmod(sec,86400); h,sec=divmod(sec,3600); m,sec=divmod(sec,60)
     await interaction.response.send_message(f"⏱️ Bot online hai: **{d}d {h}h {m}m {sec}s** se", ephemeral=True)
 
-@bot.tree.command(name="serverinfo", description="Server ki jankari dekho")
+@bot.tree.command(name="serverinfo", description="Show server information")
 async def serverinfo(interaction: discord.Interaction):
     g=interaction.guild
     if g is None: await interaction.response.send_message("Ye sirf server me chalega.", ephemeral=True); return
@@ -165,7 +165,7 @@ async def serverinfo(interaction: discord.Interaction):
     if g.icon: embed.set_thumbnail(url=g.icon.url)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="userinfo", description="Kisi member ki jankari dekho")
+@bot.tree.command(name="userinfo", description="Show a member's information")
 @app_commands.describe(member="Kis member ki jankari chahiye")
 async def userinfo(interaction: discord.Interaction, member: discord.Member):
     embed=discord.Embed(title=f"👤 {member.display_name}", color=0xf39c12)
@@ -178,18 +178,18 @@ async def userinfo(interaction: discord.Interaction, member: discord.Member):
     embed.set_thumbnail(url=member.display_avatar.url)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="avatar", description="Kisi member ki profile photo badi karke dekho")
+@bot.tree.command(name="avatar", description="Show a member's avatar (large)")
 @app_commands.describe(member="Kiska avatar chahiye")
 async def avatar(interaction: discord.Interaction, member: discord.Member):
     embed=discord.Embed(title=f"🖼️ {member.display_name} ka avatar", color=0x9b59b6)
     embed.set_image(url=member.display_avatar.with_size(1024).url)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="membercount", description="Server me kul kitne members hai")
+@bot.tree.command(name="membercount", description="Show total member count")
 async def membercount(interaction: discord.Interaction):
     await interaction.response.send_message(f"👥 **{interaction.guild.name}** me kul **{interaction.guild.member_count}** members hai.", ephemeral=True)
 
-@bot.tree.command(name="roleinfo", description="Kisi role ki jankari dekho")
+@bot.tree.command(name="roleinfo", description="Show role information")
 @app_commands.describe(role="Kis role ki jankari chahiye")
 async def roleinfo(interaction: discord.Interaction, role: discord.Role):
     embed=discord.Embed(title=f"🎭 {role.name}", color=role.color)
@@ -199,7 +199,7 @@ async def roleinfo(interaction: discord.Interaction, role: discord.Role):
     embed.add_field(name="Admin hai?", value="Ha" if role.permissions.administrator else "Nahi", inline=True)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="say", description="Bot se message bulwao (admin)")
+@bot.tree.command(name="say", description="Make the bot send a message (admin)")
 @app_commands.describe(text="Kya bhejna hai", channel="Kis channel me (khali = yahi channel)")
 async def say(interaction: discord.Interaction, text: str, channel: discord.TextChannel = None):
     if not _is_mod(interaction): await _deny(interaction); return
@@ -207,7 +207,7 @@ async def say(interaction: discord.Interaction, text: str, channel: discord.Text
     await ch.send(text)
     await interaction.response.send_message(f"✅ Bhej diya {ch.mention}", ephemeral=True)
 
-@bot.tree.command(name="announce", description="Embed announcement karo (admin)")
+@bot.tree.command(name="announce", description="Send an embed announcement (admin)")
 @app_commands.describe(title="Title", description="Announcement", channel="Kis channel me (khali = yahi channel)")
 async def announce(interaction: discord.Interaction, title: str, description: str, channel: discord.TextChannel = None):
     if not _is_mod(interaction): await _deny(interaction); return
@@ -217,7 +217,7 @@ async def announce(interaction: discord.Interaction, title: str, description: st
     await ch.send(embed=embed)
     await interaction.response.send_message(f"✅ Announce ho gaya {ch.mention}", ephemeral=True)
 
-@bot.tree.command(name="dm", description="Kisi member ko bot se DM bhejo (admin)")
+@bot.tree.command(name="dm", description="Send a DM to a member via the bot (admin)")
 @app_commands.describe(member="Kisko DM bhejna hai", message="DM me kya bhejna hai")
 async def dm_cmd(interaction: discord.Interaction, member: discord.Member, message: str):
     if not _is_mod(interaction): await _deny(interaction); return
@@ -227,7 +227,7 @@ async def dm_cmd(interaction: discord.Interaction, member: discord.Member, messa
     except discord.Forbidden:
         await interaction.response.send_message(f"❌ {member.mention} ne DM band kiye hai.", ephemeral=True)
 
-@bot.tree.command(name="clear", description="Channel ke messages delete karo (admin)")
+@bot.tree.command(name="clear", description="Delete channel messages (admin)")
 @app_commands.describe(amount="Kitne messages delete karne hai (1-100)")
 async def clear(interaction: discord.Interaction, amount: int):
     if not _is_mod(interaction): await _deny(interaction); return
@@ -236,7 +236,7 @@ async def clear(interaction: discord.Interaction, amount: int):
     deleted=await interaction.channel.purge(limit=amount)
     await interaction.followup.send(f"🗑️ {len(deleted)} messages delete kiye.", ephemeral=True)
 
-@bot.tree.command(name="slowmode", description="Channel ka slowmode set karo (admin)")
+@bot.tree.command(name="slowmode", description="Set channel slowmode (admin)")
 @app_commands.describe(seconds="Kitne second ka slowmode (0 = band)", channel="Kis channel me (khali = yahi)")
 async def slowmode(interaction: discord.Interaction, seconds: int, channel: discord.TextChannel = None):
     if not _is_mod(interaction): await _deny(interaction); return
@@ -245,7 +245,7 @@ async def slowmode(interaction: discord.Interaction, seconds: int, channel: disc
     await ch.edit(slowmode_delay=seconds)
     await interaction.response.send_message(f"🐌 {ch.mention} ka slowmode **{seconds}s** ho gaya.", ephemeral=True)
 
-@bot.tree.command(name="lock", description="Channel band karo — koi message nahi bhej payega (admin)")
+@bot.tree.command(name="lock", description="Lock this channel (admin)")
 @app_commands.describe(channel="Kis channel ko band karna hai (khali = yahi)")
 async def lock(interaction: discord.Interaction, channel: discord.TextChannel = None):
     if not _is_mod(interaction): await _deny(interaction); return
@@ -254,7 +254,7 @@ async def lock(interaction: discord.Interaction, channel: discord.TextChannel = 
     await ch.send("🔒 Ye channel band kiya gaya hai.")
     await interaction.response.send_message(f"🔒 {ch.mention} band ho gaya.", ephemeral=True)
 
-@bot.tree.command(name="unlock", description="Band channel wapas kholo (admin)")
+@bot.tree.command(name="unlock", description="Unlock this channel (admin)")
 @app_commands.describe(channel="Kis channel ko kholna hai (khali = yahi)")
 async def unlock(interaction: discord.Interaction, channel: discord.TextChannel = None):
     if not _is_mod(interaction): await _deny(interaction); return
@@ -262,7 +262,7 @@ async def unlock(interaction: discord.Interaction, channel: discord.TextChannel 
     await ch.set_permissions(interaction.guild.default_role, send_messages=None)
     await interaction.response.send_message(f"🔓 {ch.mention} khul gaya.", ephemeral=True)
 
-@bot.tree.command(name="kick", description="Member ko server se nikalo (admin)")
+@bot.tree.command(name="kick", description="Kick a member (admin)")
 @app_commands.describe(member="Kisko nikalna hai", reason="Wajah")
 async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "koi wajah nahi"):
     if not interaction.user.guild_permissions.kick_members: await _deny(interaction); return
@@ -270,7 +270,7 @@ async def kick(interaction: discord.Interaction, member: discord.Member, reason:
     except discord.Forbidden: await interaction.response.send_message("❌ Nahi ho paya — mera role us member se neeche hai.", ephemeral=True); return
     await interaction.response.send_message(f"👢 {member.mention} ko kick kiya. Wajah: {reason}")
 
-@bot.tree.command(name="ban", description="Member ko ban karo (admin)")
+@bot.tree.command(name="ban", description="Ban a member (admin)")
 @app_commands.describe(member="Kisko ban karna hai", reason="Wajah")
 async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "koi wajah nahi"):
     if not interaction.user.guild_permissions.ban_members: await _deny(interaction); return
@@ -278,7 +278,7 @@ async def ban(interaction: discord.Interaction, member: discord.Member, reason: 
     except discord.Forbidden: await interaction.response.send_message("❌ Nahi ho paya — mera role us member se neeche hai.", ephemeral=True); return
     await interaction.response.send_message(f"🔨 {member.mention} ban ho gaya. Wajah: {reason}")
 
-@bot.tree.command(name="unban", description="Ban hatayo user ID se (admin)")
+@bot.tree.command(name="unban", description="Unban by user ID (admin)")
 @app_commands.describe(user_id="Discord user ID jiska ban hatana hai")
 async def unban(interaction: discord.Interaction, user_id: str):
     if not interaction.user.guild_permissions.ban_members: await _deny(interaction); return
@@ -290,7 +290,7 @@ async def unban(interaction: discord.Interaction, user_id: str):
     except discord.NotFound: await interaction.response.send_message("❌ Is ID ka koi ban nahi mila.", ephemeral=True)
     except discord.Forbidden: await interaction.response.send_message("❌ Mere paas permission nahi hai.", ephemeral=True)
 
-@bot.tree.command(name="timeout", description="Member ko timeout (mute) karo (admin)")
+@bot.tree.command(name="timeout", description="Timeout (mute) a member (admin)")
 @app_commands.describe(member="Kisko timeout dena hai", minutes="Kitne minute (1-40320)", reason="Wajah")
 async def timeout_cmd(interaction: discord.Interaction, member: discord.Member, minutes: int, reason: str = "koi wajah nahi"):
     if not interaction.user.guild_permissions.moderate_members: await _deny(interaction); return
@@ -299,14 +299,14 @@ async def timeout_cmd(interaction: discord.Interaction, member: discord.Member, 
     except discord.Forbidden: await interaction.response.send_message("❌ Nahi ho paya — mera role neeche hai.", ephemeral=True); return
     await interaction.response.send_message(f"🔇 {member.mention} ko **{minutes} minute** timeout mila. Wajah: {reason}")
 
-@bot.tree.command(name="untimeout", description="Member ka timeout hatayo (admin)")
+@bot.tree.command(name="untimeout", description="Remove a member's timeout (admin)")
 @app_commands.describe(member="Kiska timeout hatana hai")
 async def untimeout(interaction: discord.Interaction, member: discord.Member):
     if not interaction.user.guild_permissions.moderate_members: await _deny(interaction); return
     await member.timeout(None)
     await interaction.response.send_message(f"🔊 {member.mention} ka timeout hata diya.", ephemeral=True)
 
-@bot.tree.command(name="warn", description="Member ko warning do (admin)")
+@bot.tree.command(name="warn", description="Warn a member (admin)")
 @app_commands.describe(member="Kisko warn karna hai", reason="Wajah")
 async def warn(interaction: discord.Interaction, member: discord.Member, reason: str):
     if not _is_mod(interaction): await _deny(interaction); return
@@ -316,7 +316,7 @@ async def warn(interaction: discord.Interaction, member: discord.Member, reason:
     except discord.Forbidden: pass
     await interaction.response.send_message(f"⚠️ {member.mention} ko warning di (**kul {total}**). Wajah: {reason}")
 
-@bot.tree.command(name="warnings", description="Member ki warnings dekho")
+@bot.tree.command(name="warnings", description="View a member's warnings")
 @app_commands.describe(member="Kis member ki warnings dekhni hai")
 async def warnings_cmd(interaction: discord.Interaction, member: discord.Member):
     lst=_warnings.get(interaction.guild.id, {}).get(member.id, [])
@@ -324,14 +324,14 @@ async def warnings_cmd(interaction: discord.Interaction, member: discord.Member)
     txt="\n".join(f"{i+1}. {r}" for i,r in enumerate(lst))
     await interaction.response.send_message(f"⚠️ **{member.display_name}** ki warnings ({len(lst)}):\n{txt}", ephemeral=True)
 
-@bot.tree.command(name="clearwarn", description="Member ki saari warnings saaf karo (admin)")
+@bot.tree.command(name="clearwarn", description="Clear all warnings of a member (admin)")
 @app_commands.describe(member="Kis member ki warnings saaf karni hai")
 async def clearwarn(interaction: discord.Interaction, member: discord.Member):
     if not _is_mod(interaction): await _deny(interaction); return
     _warnings.get(interaction.guild.id, {}).pop(member.id, None)
     await interaction.response.send_message(f"✅ {member.mention} ki warnings saaf ho gayi.", ephemeral=True)
 
-@bot.tree.command(name="role_add", description="Member ko role do (admin)")
+@bot.tree.command(name="role_add", description="Give a role to a member (admin)")
 @app_commands.describe(member="Kisko role dena hai", role="Konsa role dena hai")
 async def role_add(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
     if not interaction.user.guild_permissions.manage_roles: await _deny(interaction); return
@@ -339,7 +339,7 @@ async def role_add(interaction: discord.Interaction, member: discord.Member, rol
     except discord.Forbidden: await interaction.response.send_message("❌ Ye role mere role se upar hai — mera role upar rakho fir hoga.", ephemeral=True); return
     await interaction.response.send_message(f"✅ {member.mention} ko **{role.name}** role mil gaya.")
 
-@bot.tree.command(name="role_remove", description="Member se role hatayo (admin)")
+@bot.tree.command(name="role_remove", description="Remove a role from a member (admin)")
 @app_commands.describe(member="Kis se role hatana hai", role="Konsa role hatana hai")
 async def role_remove(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
     if not interaction.user.guild_permissions.manage_roles: await _deny(interaction); return
@@ -347,7 +347,7 @@ async def role_remove(interaction: discord.Interaction, member: discord.Member, 
     except discord.Forbidden: await interaction.response.send_message("❌ Ye role mere role se upar hai.", ephemeral=True); return
     await interaction.response.send_message(f"✅ {member.mention} se **{role.name}** role hata diya.")
 
-@bot.tree.command(name="nickname", description="Member ka nickname badlo (admin)")
+@bot.tree.command(name="nickname", description="Change a member's nickname (admin)")
 @app_commands.describe(member="Kis ka nickname badalna hai", name="Naya nickname (khali = purana hatao)")
 async def nickname_cmd(interaction: discord.Interaction, member: discord.Member, name: str = None):
     if not interaction.user.guild_permissions.manage_nicknames: await _deny(interaction); return
@@ -355,7 +355,7 @@ async def nickname_cmd(interaction: discord.Interaction, member: discord.Member,
     except discord.Forbidden: await interaction.response.send_message("❌ Nahi ho paya — mera role neeche hai.", ephemeral=True); return
     await interaction.response.send_message(f"✅ {member.mention} ka nickname badal diya.", ephemeral=True)
 
-@bot.tree.command(name="poll", description="Poll bano — log reaction se vote karege")
+@bot.tree.command(name="poll", description="Create a poll (vote with reactions)")
 @app_commands.describe(question="Poll ka sawal", options="Option comma se alag karo (jaise: Ha,Nahi, baad me)")
 async def poll(interaction: discord.Interaction, question: str, options: str):
     opts=[o.strip() for o in options.split(",") if o.strip()][:5]
@@ -368,7 +368,7 @@ async def poll(interaction: discord.Interaction, question: str, options: str):
     msg=await interaction.original_response()
     for i in range(len(opts)): await msg.add_reaction(letters[i])
 
-@bot.tree.command(name="remind", description="Reminder lagayo — bot baad me yaad dilayega")
+@bot.tree.command(name="remind", description="Set a reminder")
 @app_commands.describe(minutes="Kitne minute baad (1-10080)", text="Kya yaad dilana hai")
 async def remind(interaction: discord.Interaction, minutes: int, text: str):
     if not 1 <= minutes <= 10080: await interaction.response.send_message("❌ 1 se 10080 minute ke beech do.", ephemeral=True); return
@@ -386,7 +386,7 @@ async def _ask_gemini(prompt: str, history=None) -> str:
         return "⚠️ AI set nahi hai — `GEMINI_API_KEY` Termux wali command me dalna bacha hai."
     url=f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     payload={
-        "system_instruction": {"parts": [{"text": "Tum Hollow purple naam ke Discord bot ho. User jis bhasha me puche (Hinglish, Hindi ya English) usi me jawab do. Jawab saaf, kaam ka aur zyada se zyada 1800 characters me rakho."}]},
+        "system_instruction": {"parts": [{"text": "You are Hollow purple, a Discord bot assistant. Always reply in clear English only — never in Hindi or Hinglish, even if the user writes in Hinglish. Keep answers helpful, concise and under 1800 characters."}]},
         "contents": (history or []) + [{"role": "user", "parts": [{"text": prompt[:4000]}]}],
     }
     try:
@@ -403,7 +403,7 @@ async def _ask_gemini(prompt: str, history=None) -> str:
         log.error("Gemini fail\n%s", traceback.format_exc())
         return "⚠️ AI tak baat nahi pahuchi — internet ya key check karke fir try karna."
 
-@bot.tree.command(name="ask", description="AI se kuch bhi puchho")
+@bot.tree.command(name="ask", description="Ask the AI anything")
 @app_commands.describe(sawal="Kya puchna hai")
 async def ask_cmd(interaction: discord.Interaction, sawal: str):
     now=time.time()
@@ -443,19 +443,19 @@ async def on_message(message: discord.Message):
                 await message.reply(jawab)
     await bot.process_commands(message)
 
-@bot.tree.command(name="chatbot", description="Is channel me chatbot chalu karo — bina command baat karega (admin)")
+@bot.tree.command(name="chatbot", description="Enable chatbot in this channel (admin)")
 async def chatbot_on(interaction: discord.Interaction):
     if not _is_mod(interaction): await _deny(interaction); return
     _chatbot_channels.add(interaction.channel.id)
     await interaction.response.send_message("🤖 Chatbot **chalu** ho gaya is channel me! Ab bina command ke bas baat likho, mai jawab dunga. Band karne ko `/chatbot_off`.")
 
-@bot.tree.command(name="chatbot_off", description="Is channel ka chatbot band karo (admin)")
+@bot.tree.command(name="chatbot_off", description="Disable chatbot in this channel (admin)")
 async def chatbot_off(interaction: discord.Interaction):
     if not _is_mod(interaction): await _deny(interaction); return
     _chatbot_channels.discard(interaction.channel.id)
     await interaction.response.send_message("🤖 Chatbot **band** ho gaya is channel me.", ephemeral=True)
 
-@bot.tree.command(name="chatbot_status", description="Chatbot kahan chalu hai dekho")
+@bot.tree.command(name="chatbot_status", description="Check chatbot status in this channel")
 async def chatbot_status(interaction: discord.Interaction):
     if interaction.channel.id in _chatbot_channels:
         await interaction.response.send_message("🤖 Is channel me chatbot **chalu** hai.", ephemeral=True)
@@ -481,7 +481,7 @@ async def _make_image(prompt: str) -> bytes:
                     raise RuntimeError(f"image HTTP {resp.status}")
             await asyncio.sleep(46)
 
-@bot.tree.command(name="image", description="AI se tasveer bano — kya banana hai likho")
+@bot.tree.command(name="image", description="Generate an AI image — describe it")
 @app_commands.describe(vivaran="Tasveer me kya dikhe (jaise: BGMI soldier sunset pe)")
 async def image_cmd(interaction: discord.Interaction, vivaran: str):
     now=time.time()
@@ -497,7 +497,7 @@ async def image_cmd(interaction: discord.Interaction, vivaran: str):
         return
     await interaction.followup.send(content=f"🎨 **{interaction.user.display_name}** ke liye: {vivaran}", file=discord.File(io.BytesIO(data), filename="ai-image.jpg"))
 
-@bot.tree.command(name="report", description="Kisi member ki report admin tak bhejo")
+@bot.tree.command(name="report", description="Report a member to the admins")
 @app_commands.describe(member="Kis ki report karni hai", reason="Kya galti ki usne")
 async def report(interaction: discord.Interaction, member: discord.Member, reason: str):
     embed=discord.Embed(title="🚨 Nayi Report", color=0xe74c3c)
