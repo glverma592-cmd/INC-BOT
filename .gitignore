@@ -8,3 +8,4 @@ bot/autoroles.json
 bot/noprefix.json
 bot/giveaways.json
 bot/afk.json
+bot/chatbot_channels.json

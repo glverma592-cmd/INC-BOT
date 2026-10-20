@@ -211,7 +211,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="🎁 Giveaway", value="`/giveaway` — prize, time (jaise `30m`, `2h`, `1d`) aur winners set karke stylish giveaway start karo. Time khatam hote hi winner automatic announce hoga.", inline=False)
     embed.add_field(name="🎭 Auto-Role", value="`/autorole_bot_add` (naya member join kare to khud role milega) • `/autorole_bot_remove` • `/autorole_bot_status`", inline=False)
     embed.add_field(name="👑 No Prefix (Owner Only)", value="`/noprefix` — granted member can chat with the AI without `/ask` or a mention. Power lasts **2 months**.", inline=False)
-    embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • bot ko @mention karo • `/chatbot` (is channel me bina command baat) • `/chatbot_off` • `/chatbot_status`", inline=False)
+    embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • `/chatbot_on` — isse chalu channel me DIANA sirf tab jawab degi jab use @tag karke kuch bola jaye", inline=False)
     embed.add_field(name="🎨 AI Image", value="`/image kya banana hai` — bas ye ek hi image wala command hai", inline=False)
     embed.add_field(name="✨ More Utility & Fun", value="`/invite` `/support` `/rules` `/suggest` `/coinflip` `/dice` `/choose` `/eightball` `/rps` `/calc` `/password` `/qr` `/color` `/emojiinfo` `/channelinfo` `/roles` `/banner` `/afk` `/snipe` `/timer`", inline=False)
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
@@ -767,7 +767,18 @@ async def ask_cmd(interaction: discord.Interaction, sawal: str):
     del hist[:-6]
     await interaction.followup.send(f"**{interaction.user.display_name}:** {sawal}\n\n{jawab}")
 
-_chatbot_channels: set[int] = set()
+_CHATBOT_FILE = Path(__file__).resolve().parent / "chatbot_channels.json"
+def _load_chatbot_channels() -> set[int]:
+    try:
+        return {int(x) for x in json.loads(_CHATBOT_FILE.read_text(encoding="utf-8"))}
+    except Exception:
+        return set()
+_tag_chatbot_channels: set[int] = _load_chatbot_channels()
+def _save_chatbot_channels():
+    try:
+        _CHATBOT_FILE.write_text(json.dumps(sorted(_tag_chatbot_channels)), encoding="utf-8")
+    except Exception:
+        log.warning("chatbot channels save fail\n%s", traceback.format_exc())
 _memory: dict[tuple[int, int], list] = {}
 
 @bot.event
@@ -775,9 +786,9 @@ async def on_message(message: discord.Message):
     if message.author.bot: return
     await _process_afk_message(message)
     is_mention = bool(bot.user and bot.user in message.mentions)
-    is_chatbot = message.channel.id in _chatbot_channels
+    is_tag_chatbot = message.channel.id in _tag_chatbot_channels
     is_noprefix = _noprefix_active(message.author.id)
-    if is_mention or is_chatbot or is_noprefix:
+    if (is_mention and is_tag_chatbot) or is_noprefix:
         if is_mention:
             sawal=message.content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
         else:
@@ -795,24 +806,34 @@ async def on_message(message: discord.Message):
                 await message.reply(jawab)
     await bot.process_commands(message)
 
-@bot.tree.command(name="chatbot", description="Enable chatbot in this channel (admin)")
-async def chatbot_on(interaction: discord.Interaction):
-    if not _is_mod(interaction): await _deny(interaction); return
-    _chatbot_channels.add(interaction.channel.id)
-    await interaction.response.send_message("🤖 Chatbot **chalu** ho gaya is channel me! Ab bina command ke bas baat likho, mai jawab dunga. Band karne ko `/chatbot_off`.")
-
-@bot.tree.command(name="chatbot_off", description="Disable chatbot in this channel (admin)")
-async def chatbot_off(interaction: discord.Interaction):
-    if not _is_mod(interaction): await _deny(interaction); return
-    _chatbot_channels.discard(interaction.channel.id)
-    await interaction.response.send_message("🤖 Chatbot **band** ho gaya is channel me.", ephemeral=True)
-
-@bot.tree.command(name="chatbot_status", description="Check chatbot status in this channel")
-async def chatbot_status(interaction: discord.Interaction):
-    if interaction.channel.id in _chatbot_channels:
-        await interaction.response.send_message("🤖 Is channel me chatbot **chalu** hai.", ephemeral=True)
+@bot.tree.command(name="chatbot_on", description="Tag-only AI chat for this channel: DIANA replies only when mentioned (admin)")
+@app_commands.describe(action="Choose On, Off, or Status — default is On")
+@app_commands.choices(action=[
+    app_commands.Choice(name="On — reply only when DIANA is tagged", value="on"),
+    app_commands.Choice(name="Off — stop tag replies in this channel", value="off"),
+    app_commands.Choice(name="Status — check whether tag chat is on", value="status"),
+])
+async def chatbot_on_cmd(interaction: discord.Interaction, action: str = "on"):
+    if interaction.channel is None:
+        await interaction.response.send_message("❌ Channel not found.", ephemeral=True); return
+    if action in ("on", "off") and not _is_mod(interaction):
+        await _deny(interaction); return
+    if action == "on":
+        if interaction.channel.id in _tag_chatbot_channels:
+            await interaction.response.send_message("🤖 Tag chat is already **ON** in this channel. Mention DIANA with your question and she will reply.", ephemeral=True); return
+        _tag_chatbot_channels.add(interaction.channel.id); _save_chatbot_channels()
+        await interaction.response.send_message("🤖 **Chatbot ON!** ✅\nFrom now on, DIANA will reply in this channel **only when someone tags/mentions her** with a question.\nExample: `@DIANA What is the capital of India?`\n\nUse `/chatbot_on` and choose **Off** to stop it.")
+    elif action == "off":
+        if interaction.channel.id in _tag_chatbot_channels:
+            _tag_chatbot_channels.discard(interaction.channel.id); _save_chatbot_channels()
+            await interaction.response.send_message("🤖 Tag chat is now **OFF** in this channel. DIANA will not reply to mentions here.", ephemeral=True)
+        else:
+            await interaction.response.send_message("ℹ️ Tag chat is already OFF in this channel.", ephemeral=True)
     else:
-        await interaction.response.send_message("🤖 Is channel me chatbot **band** hai. Chalu karna ho to admin `/chatbot` kare.", ephemeral=True)
+        if interaction.channel.id in _tag_chatbot_channels:
+            await interaction.response.send_message("🤖 Tag chat is **ON** in this channel — DIANA replies when she is tagged/mentioned.", ephemeral=True)
+        else:
+            await interaction.response.send_message("🤖 Tag chat is **OFF** in this channel. An admin can start it with `/chatbot_on`.", ephemeral=True)
 
 @bot.tree.command(name="noprefix", description="Owner only: grant, remove, or check No Prefix power (lasts 2 months)")
 @app_commands.describe(action="Add, remove, or check No Prefix power", member="Select the member")
