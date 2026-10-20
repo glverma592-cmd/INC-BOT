@@ -133,7 +133,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="📢 Announcement", value="`/say` `/announce` `/dm` `/report`", inline=False)
     embed.add_field(name="ℹ️ Jankari", value="`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo`", inline=False)
     embed.add_field(name="🎉 Utility", value="`/poll` `/remind` `/help`", inline=False)
-    embed.add_field(name="🤖 AI Chat", value="`/ask sawal` ya bot ko @mention karke kuch bhi puch lo", inline=False)
+    embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • bot ko @mention karo • `/chatbot` (is channel me bina command baat) • `/chatbot_off` • `/chatbot_status`", inline=False)
     embed.add_field(name="🎨 AI Image", value="`/image kya banana hai` — bas ye ek hi image wala command hai", inline=False)
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -381,13 +381,13 @@ async def remind(interaction: discord.Interaction, minutes: int, text: str):
 
 _ask_cooldown: dict[int, float] = {}
 
-async def _ask_gemini(prompt: str) -> str:
+async def _ask_gemini(prompt: str, history=None) -> str:
     if not GEMINI_API_KEY:
         return "⚠️ AI set nahi hai — `GEMINI_API_KEY` Termux wali command me dalna bacha hai."
     url=f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     payload={
         "system_instruction": {"parts": [{"text": "Tum Hollow purple naam ke Discord bot ho. User jis bhasha me puche (Hinglish, Hindi ya English) usi me jawab do. Jawab saaf, kaam ka aur zyada se zyada 1800 characters me rakho."}]},
-        "contents": [{"parts": [{"text": prompt[:4000]}]}],
+        "contents": (history or []) + [{"role": "user", "parts": [{"text": prompt[:4000]}]}],
     }
     try:
         async with aiohttp.ClientSession() as session:
@@ -411,22 +411,56 @@ async def ask_cmd(interaction: discord.Interaction, sawal: str):
         await interaction.response.send_message("⏳ 5 second ruk ke fir pucho.", ephemeral=True); return
     _ask_cooldown[interaction.user.id]=now
     await interaction.response.defer()
-    jawab=await _ask_gemini(sawal)
+    hist=_memory.setdefault((interaction.guild.id if interaction.guild else 0, interaction.user.id), [])
+    jawab=await _ask_gemini(sawal, hist)
+    hist += [{"role":"user","parts":[{"text":sawal[:2000]}]}, {"role":"model","parts":[{"text":jawab[:2000]}]}]
+    del hist[:-6]
     await interaction.followup.send(f"**{interaction.user.display_name}:** {sawal}\n\n{jawab}")
+
+_chatbot_channels: set[int] = set()
+_memory: dict[tuple[int, int], list] = {}
 
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot: return
-    if bot.user and bot.user in message.mentions:
-        sawal=message.content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
+    is_mention = bool(bot.user and bot.user in message.mentions)
+    is_chatbot = message.channel.id in _chatbot_channels
+    if is_mention or is_chatbot:
+        if is_mention:
+            sawal=message.content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
+        else:
+            sawal=message.content.strip()
+            if sawal.startswith(("!", "/")): sawal=""
         if sawal:
             now=time.time()
             if now - _ask_cooldown.get(message.author.id, 0) >= 5:
                 _ask_cooldown[message.author.id]=now
+                hist=_memory.setdefault((message.guild.id if message.guild else 0, message.author.id), [])
                 async with message.channel.typing():
-                    jawab=await _ask_gemini(sawal)
+                    jawab=await _ask_gemini(sawal, hist)
+                hist += [{"role":"user","parts":[{"text":sawal[:2000]}]}, {"role":"model","parts":[{"text":jawab[:2000]}]}]
+                del hist[:-6]
                 await message.reply(jawab)
     await bot.process_commands(message)
+
+@bot.tree.command(name="chatbot", description="Is channel me chatbot chalu karo — bina command baat karega (admin)")
+async def chatbot_on(interaction: discord.Interaction):
+    if not _is_mod(interaction): await _deny(interaction); return
+    _chatbot_channels.add(interaction.channel.id)
+    await interaction.response.send_message("🤖 Chatbot **chalu** ho gaya is channel me! Ab bina command ke bas baat likho, mai jawab dunga. Band karne ko `/chatbot_off`.")
+
+@bot.tree.command(name="chatbot_off", description="Is channel ka chatbot band karo (admin)")
+async def chatbot_off(interaction: discord.Interaction):
+    if not _is_mod(interaction): await _deny(interaction); return
+    _chatbot_channels.discard(interaction.channel.id)
+    await interaction.response.send_message("🤖 Chatbot **band** ho gaya is channel me.", ephemeral=True)
+
+@bot.tree.command(name="chatbot_status", description="Chatbot kahan chalu hai dekho")
+async def chatbot_status(interaction: discord.Interaction):
+    if interaction.channel.id in _chatbot_channels:
+        await interaction.response.send_message("🤖 Is channel me chatbot **chalu** hai.", ephemeral=True)
+    else:
+        await interaction.response.send_message("🤖 Is channel me chatbot **band** hai. Chalu karna ho to admin `/chatbot` kare.", ephemeral=True)
 
 _image_cooldown: dict[int, float] = {}
 
