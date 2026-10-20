@@ -9,3 +9,6 @@ bot/noprefix.json
 bot/giveaways.json
 bot/afk.json
 bot/chatbot_channels.json
+bot/levels.json
+bot/tickets.json
+bot/reminders.json

@@ -90,6 +90,7 @@ async def on_ready():
         except Exception:
             log.warning("duplicate-cleanup fail\n%s", traceback.format_exc())
     _restore_giveaways()
+    _restore_reminders()
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -209,6 +210,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="ℹ️ Jankari", value="`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo`", inline=False)
     embed.add_field(name="🎉 Utility", value="`/poll` `/remind` `/help`", inline=False)
     embed.add_field(name="🎁 Giveaway", value="`/giveaway` — prize, time (jaise `30m`, `2h`, `1d`) aur winners set karke stylish giveaway start karo. Time khatam hote hi winner automatic announce hoga.", inline=False)
+    embed.add_field(name="⭐ Levels • Tickets • Reminders", value="Chat karne par XP milega — `/rank` • `/leaderboard` • Support ke liye `/ticket`, band karne ko `/close` • `/reminders` • `/remind_cancel`", inline=False)
     embed.add_field(name="🎭 Auto-Role", value="`/autorole_bot_add` (naya member join kare to khud role milega) • `/autorole_bot_remove` • `/autorole_bot_status`", inline=False)
     embed.add_field(name="👑 No Prefix (Owner Only)", value="`/noprefix` — granted member can chat with the AI without `/ask` or a mention. Power lasts **2 months**.", inline=False)
     embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • `/chatbot_on` — isse chalu channel me DIANA sirf tab jawab degi jab use @tag karke kuch bola jaye", inline=False)
@@ -478,16 +480,95 @@ async def poll(interaction: discord.Interaction, question: str, options: str):
     msg=await interaction.original_response()
     for i in range(len(opts)): await msg.add_reaction(letters[i])
 
-@bot.tree.command(name="remind", description="Set a reminder")
-@app_commands.describe(minutes="Kitne minute baad (1-10080)", text="Kya yaad dilana hai")
+# ---------------- PERSISTENT REMINDERS ----------------
+_REMINDERS_FILE = Path(__file__).resolve().parent / "reminders.json"
+def _load_reminders() -> list[dict]:
+    try:
+        data=json.loads(_REMINDERS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+_reminders: list[dict] = _load_reminders()
+_reminder_tasks: dict[int, asyncio.Task] = {}
+def _save_reminders():
+    try:
+        _REMINDERS_FILE.write_text(json.dumps(_reminders), encoding="utf-8")
+    except Exception:
+        log.warning("reminders save fail\n%s", traceback.format_exc())
+def _next_reminder_id() -> int:
+    return max([int(r.get("id", 0)) for r in _reminders], default=0) + 1
+async def _wait_reminder(reminder_id: int):
+    try:
+        while True:
+            rec=next((r for r in _reminders if int(r.get("id", 0)) == reminder_id), None)
+            if rec is None: return
+            delay=float(rec.get("due", 0)) - datetime.datetime.now(datetime.timezone.utc).timestamp()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            rec=next((r for r in _reminders if int(r.get("id", 0)) == reminder_id), None)
+            if rec is None: return
+            _reminders.remove(rec); _save_reminders()
+            try:
+                channel=bot.get_channel(int(rec.get("channel_id", 0)))
+                if channel is None:
+                    channel=await bot.fetch_channel(int(rec.get("channel_id", 0)))
+                await channel.send(f"⏰ <@{rec.get('user_id')}> **Reminder:** {rec.get('text', '')}")
+            except Exception:
+                log.warning("reminder %s bhejne me fail", reminder_id)
+            return
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.error("reminder wait fail\n%s", traceback.format_exc())
+    finally:
+        task=_reminder_tasks.get(reminder_id)
+        if task is asyncio.current_task():
+            _reminder_tasks.pop(reminder_id, None)
+def _schedule_reminder(rec: dict):
+    rid=int(rec.get("id", 0))
+    task=_reminder_tasks.get(rid)
+    if task and not task.done(): return
+    try: _reminder_tasks[rid]=asyncio.create_task(_wait_reminder(rid))
+    except RuntimeError: pass
+def _restore_reminders():
+    for rec in list(_reminders):
+        _schedule_reminder(rec)
+
+@bot.tree.command(name="remind", description="Set a reminder (it survives bot restarts)")
+@app_commands.describe(minutes="After how many minutes? (1-10080)", text="What should I remind you about?")
 async def remind(interaction: discord.Interaction, minutes: int, text: str):
-    if not 1 <= minutes <= 10080: await interaction.response.send_message("❌ 1 se 10080 minute ke beech do.", ephemeral=True); return
-    await interaction.response.send_message(f"⏰ Thik hai {interaction.user.mention}, **{minutes} minute** baad yaad dila dunga: {text}", ephemeral=True)
-    async def _later():
-        await asyncio.sleep(minutes*60)
-        try: await interaction.channel.send(f"⏰ {interaction.user.mention} Reminder: **{text}**")
-        except Exception: pass
-    asyncio.create_task(_later())
+    if not 1 <= minutes <= 10080: await interaction.response.send_message("❌ Please choose between 1 and 10080 minutes.", ephemeral=True); return
+    text=text.strip()[:500]
+    if not text: await interaction.response.send_message("❌ Please write what I should remind you about.", ephemeral=True); return
+    due=int(datetime.datetime.now(datetime.timezone.utc).timestamp()) + minutes*60
+    rec={"id": _next_reminder_id(), "guild_id": interaction.guild.id if interaction.guild else 0, "channel_id": interaction.channel.id if interaction.channel else 0, "user_id": interaction.user.id, "text": text, "due": due}
+    _reminders.append(rec); _save_reminders(); _schedule_reminder(rec)
+    await interaction.response.send_message(f"⏰ Done {interaction.user.mention} — I will remind you <t:{due}:R>: **{text}**\n🆔 Reminder ID: `{rec['id']}` (cancel with `/remind_cancel`)", ephemeral=True)
+
+@bot.tree.command(name="reminders", description="See your pending reminders")
+async def reminders_cmd(interaction: discord.Interaction):
+    gid=interaction.guild.id if interaction.guild else 0
+    mine=sorted([r for r in _reminders if r.get("user_id") == interaction.user.id and r.get("guild_id") == gid], key=lambda r: r.get("due", 0))
+    if not mine:
+        await interaction.response.send_message("ℹ️ You have no pending reminders in this server.", ephemeral=True); return
+    embed=discord.Embed(title="⏰ Your Reminders", color=0xf39c12)
+    for rec in mine[:10]:
+        embed.add_field(name=f"ID {rec.get('id')} • <t:{int(rec.get('due', 0))}:R>", value=str(rec.get("text", ""))[:200], inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="remind_cancel", description="Cancel one of your reminders")
+@app_commands.describe(reminder_id="Reminder ID shown by /reminders")
+async def remind_cancel_cmd(interaction: discord.Interaction, reminder_id: int):
+    rec=next((r for r in _reminders if int(r.get("id", 0)) == reminder_id), None)
+    if rec is None:
+        await interaction.response.send_message("ℹ️ No reminder found with that ID.", ephemeral=True); return
+    if rec.get("user_id") != interaction.user.id and not _is_mod(interaction):
+        await interaction.response.send_message("❌ You can cancel only your own reminders.", ephemeral=True); return
+    _reminders.remove(rec); _save_reminders()
+    task=_reminder_tasks.pop(reminder_id, None)
+    if task: task.cancel()
+    await interaction.response.send_message(f"✅ Reminder `{reminder_id}` cancelled.", ephemeral=True)
+
 
 _ask_cooldown: dict[int, float] = {}
 
@@ -793,6 +874,7 @@ _memory: dict[tuple[int, int], list] = {}
 async def on_message(message: discord.Message):
     if message.author.bot: return
     await _process_afk_message(message)
+    await _award_xp(message)
     is_mention = bool(bot.user and bot.user in message.mentions)
     is_tag_chatbot = _tag_chatbot_master_on and message.channel.id in _tag_chatbot_channels
     is_noprefix = _noprefix_active(message.author.id)
@@ -1279,6 +1361,163 @@ async def timer_cmd(interaction: discord.Interaction, minutes: app_commands.Rang
         except Exception:
             pass
     asyncio.create_task(_finish_timer())
+
+# ---------------- LEVELS / XP SYSTEM ----------------
+_LEVELS_FILE = Path(__file__).resolve().parent / "levels.json"
+def _load_levels() -> dict:
+    try:
+        data=json.loads(_LEVELS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+_levels: dict = _load_levels()
+def _save_levels():
+    try:
+        _LEVELS_FILE.write_text(json.dumps(_levels), encoding="utf-8")
+    except Exception:
+        log.warning("levels save fail\n%s", traceback.format_exc())
+def _xp_needed(level: int) -> int:
+    """Level L se L+1 tak pahuchne ke liye chahiye XP."""
+    return 100 + int(level) * 75
+def _level_progress(total_xp: int):
+    level=0; remaining=int(total_xp)
+    while remaining >= _xp_needed(level):
+        remaining -= _xp_needed(level); level += 1
+    return level, remaining, _xp_needed(level)
+async def _award_xp(message: discord.Message):
+    if message.guild is None or message.author.bot: return
+    gid=str(message.guild.id); uid=str(message.author.id)
+    guild_data=_levels.setdefault(gid, {})
+    rec=guild_data.setdefault(uid, {"xp": 0, "messages": 0, "last_xp": 0})
+    rec["messages"]=int(rec.get("messages", 0)) + 1
+    now=datetime.datetime.now(datetime.timezone.utc).timestamp()
+    if now - float(rec.get("last_xp", 0)) < 60:
+        return  # har minute sirf ek baar XP — spam farming band
+    old_level, _, _=_level_progress(int(rec.get("xp", 0)))
+    gain=random.randint(15, 25)
+    rec["xp"]=int(rec.get("xp", 0)) + gain
+    rec["last_xp"]=now
+    _save_levels()
+    new_level, _, _=_level_progress(int(rec["xp"]))
+    if new_level > old_level:
+        try:
+            await message.channel.send(f"🎉 Congratulations {message.author.mention}! You reached **Level {new_level}** ⭐\nUse `/rank` to see your progress.")
+        except Exception: pass
+
+@bot.tree.command(name="rank", description="See your level, XP and server rank")
+@app_commands.describe(member="Whose rank? Leave blank for yourself")
+async def rank_cmd(interaction: discord.Interaction, member: discord.Member = None):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Levels work only inside a server.", ephemeral=True); return
+    target=member or interaction.user
+    guild_data=_levels.get(str(interaction.guild.id), {})
+    rec=guild_data.get(str(target.id), {"xp": 0, "messages": 0})
+    total_xp=int(rec.get("xp", 0))
+    level, progress, needed=_level_progress(total_xp)
+    ranking=sorted(guild_data.items(), key=lambda kv: int(kv[1].get("xp", 0)), reverse=True)
+    position=next((i+1 for i, (uid, _) in enumerate(ranking) if uid == str(target.id)), len(ranking) + 1)
+    filled=max(0, min(10, int((progress / needed) * 10) if needed else 10))
+    bar="🟩" * filled + "⬛" * (10 - filled)
+    embed=discord.Embed(title=f"⭐ {target.display_name}'s Rank", color=0xf1c40f)
+    embed.set_thumbnail(url=target.display_avatar.url)
+    embed.add_field(name="🏅 Level", value=str(level), inline=True)
+    embed.add_field(name="✨ Total XP", value=str(total_xp), inline=True)
+    embed.add_field(name="🏆 Server Rank", value=f"#{position}", inline=True)
+    embed.add_field(name="📈 Progress", value=f"{bar}\n{progress} / {needed} XP to Level {level + 1}", inline=False)
+    embed.add_field(name="💬 Messages Counted", value=str(rec.get("messages", 0)), inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="leaderboard", description="See the top 10 most active members of this server")
+async def leaderboard_cmd(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Leaderboard works only inside a server.", ephemeral=True); return
+    guild_data=_levels.get(str(interaction.guild.id), {})
+    ranking=sorted(guild_data.items(), key=lambda kv: int(kv[1].get("xp", 0)), reverse=True)[:10]
+    if not ranking:
+        await interaction.response.send_message("ℹ️ No XP data yet — start chatting to earn XP!", ephemeral=True); return
+    embed=discord.Embed(title=f"🏆 {interaction.guild.name} Leaderboard", color=0xf1c40f)
+    medals=["🥇", "🥈", "🥉"]
+    lines=[]
+    for i, (uid, rec) in enumerate(ranking):
+        level, _, _=_level_progress(int(rec.get("xp", 0)))
+        prefix=medals[i] if i < 3 else f"**#{i+1}**"
+        lines.append(f"{prefix} <@{uid}> — Level **{level}** • {int(rec.get('xp', 0))} XP")
+    embed.description="\n".join(lines)
+    embed.set_footer(text="Chat in the server to earn XP (one XP drop per minute).")
+    await interaction.response.send_message(embed=embed)
+
+# ---------------- SUPPORT TICKETS ----------------
+_TICKETS_FILE = Path(__file__).resolve().parent / "tickets.json"
+def _load_tickets() -> dict:
+    try:
+        data=json.loads(_TICKETS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+_tickets: dict = _load_tickets()
+def _save_tickets():
+    try:
+        _TICKETS_FILE.write_text(json.dumps(_tickets), encoding="utf-8")
+    except Exception:
+        log.warning("tickets save fail\n%s", traceback.format_exc())
+
+@bot.tree.command(name="ticket", description="Open a private support ticket")
+@app_commands.describe(reason="What do you need help with?")
+async def ticket_cmd(interaction: discord.Interaction, reason: str = "Support"):
+    if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
+        await interaction.response.send_message("❌ Please use this inside a server text channel.", ephemeral=True); return
+    reason=reason.strip()[:300] or "Support"
+    for tid, data in _tickets.items():
+        if data.get("open") and data.get("guild_id") == interaction.guild.id and data.get("user_id") == interaction.user.id:
+            await interaction.response.send_message(f"ℹ️ You already have an open ticket: <#{tid}>", ephemeral=True); return
+    await interaction.response.defer(ephemeral=True)
+    safe_name=re.sub(r"[^a-z0-9-]", "", interaction.user.name.lower().replace(" ", "-"))[:30] or "member"
+    try:
+        thread=await interaction.channel.create_thread(
+            name=f"ticket-{safe_name}"[:90],
+            type=discord.ChannelType.private_thread,
+            auto_archive_duration=1440,
+            invitable=False,
+            reason=f"Support ticket by {interaction.user}",
+        )
+    except discord.Forbidden:
+        await interaction.followup.send("❌ I could not create a private ticket thread. Please give me **Create Private Threads** and **Manage Threads** permissions.", ephemeral=True); return
+    except Exception:
+        log.error("ticket create fail\n%s", traceback.format_exc())
+        await interaction.followup.send("⚠️ Ticket could not be created right now. Please try again later.", ephemeral=True); return
+    try: await thread.add_user(interaction.user)
+    except Exception: pass
+    try:
+        owner=interaction.guild.owner or await interaction.guild.fetch_member(interaction.guild.owner_id)
+        if owner and owner.id != interaction.user.id: await thread.add_user(owner)
+    except Exception: pass
+    _tickets[str(thread.id)]={"guild_id": interaction.guild.id, "channel_id": interaction.channel.id, "user_id": interaction.user.id, "reason": reason, "open": True, "created_at": datetime.datetime.now(datetime.timezone.utc).timestamp()}
+    _save_tickets()
+    try:
+        embed=discord.Embed(title="🎫 Support Ticket", color=0x3498db)
+        embed.add_field(name="Member", value=interaction.user.mention, inline=True)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.set_footer(text="Explain your problem here. A moderator will help you. Use /close when done.")
+        await thread.send(content=f"👋 {interaction.user.mention} Welcome to support!", embed=embed)
+    except Exception: pass
+    await interaction.followup.send(f"✅ Ticket created: {thread.mention}", ephemeral=True)
+
+@bot.tree.command(name="close", description="Close the current support ticket")
+async def close_cmd(interaction: discord.Interaction):
+    channel=interaction.channel
+    if not isinstance(channel, discord.Thread):
+        await interaction.response.send_message("❌ Use `/close` inside a ticket thread.", ephemeral=True); return
+    data=_tickets.get(str(channel.id))
+    if data is None and not channel.name.startswith("ticket-"):
+        await interaction.response.send_message("❌ This is not a ticket thread.", ephemeral=True); return
+    if data and interaction.user.id != data.get("user_id") and not _is_mod(interaction):
+        await interaction.response.send_message("❌ Only the ticket owner or a moderator can close this ticket.", ephemeral=True); return
+    await interaction.response.send_message("🔒 Closing this ticket...")
+    if data:
+        data["open"]=False; _save_tickets()
+    try: await channel.edit(locked=True, archived=True, reason=f"Ticket closed by {interaction.user}")
+    except Exception:
+        log.error("ticket close fail\n%s", traceback.format_exc())
 
 # ---- GitHub -> Discord ----
 async def github_handler(request: web.Request):
