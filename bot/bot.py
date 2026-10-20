@@ -3,7 +3,7 @@ INC Bot — Auto-DM + Guild management
 Naya member -> DM + Verify button, /dmtest, /ping, /say, /announce, /clear + GitHub -> Discord bridge
 """
 from __future__ import annotations
-import asyncio, datetime, io, logging, os, random, time, traceback, urllib.parse
+import asyncio, datetime, io, json, logging, os, random, time, traceback, urllib.parse
 from pathlib import Path
 import aiohttp, discord
 from aiohttp import web
@@ -86,6 +86,20 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member: discord.Member):
+    # Auto-role: set kiya hua role naye member ko khud mil jayega
+    rid=_autoroles.get(member.guild.id)
+    if rid:
+        role=member.guild.get_role(rid)
+        if role is None:
+            log.warning("autorole: role %s nahi mila guild %s me", rid, member.guild.id)
+        else:
+            try:
+                await member.add_roles(role, reason="auto-role on join")
+                log.info("autorole: %s ko %s diya (%s)", member, role.name, member.guild.name)
+            except discord.Forbidden:
+                log.warning("autorole: %s ko %s nahi de paya — bot ka role upar rakho / Manage Roles chahiye", member, role.name)
+            except Exception:
+                log.error("autorole fail\n%s", traceback.format_exc())
     text=DM_TEXT.format(user=member.mention, guild=member.guild.name, count=member.guild.member_count)
     view=VerifyButton() if REQUIRE_VERIFY else None
     try:
@@ -112,6 +126,20 @@ _fallback = _fallback_post
 START_TIME = time.time()
 _warnings: dict[int, dict[int, list[str]]] = {}
 
+_AUTOROLE_FILE = Path(__file__).resolve().parent / "autoroles.json"
+def _load_autoroles() -> dict[int, int]:
+    try:
+        return {int(k): int(v) for k, v in json.loads(_AUTOROLE_FILE.read_text(encoding="utf-8")).items()}
+    except Exception:
+        return {}
+_autoroles: dict[int, int] = _load_autoroles()
+def _save_autoroles():
+    try:
+        _AUTOROLE_FILE.write_text(json.dumps({str(k): v for k, v in _autoroles.items()}), encoding="utf-8")
+    except Exception:
+        log.warning("autoroles save fail\n%s", traceback.format_exc())
+
+
 def _is_admin(interaction: discord.Interaction) -> bool:
     return bool(interaction.user.guild_permissions.administrator) if interaction.guild else False
 
@@ -133,6 +161,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="📢 Announcement", value="`/say` `/announce` `/dm` `/report`", inline=False)
     embed.add_field(name="ℹ️ Jankari", value="`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo`", inline=False)
     embed.add_field(name="🎉 Utility", value="`/poll` `/remind` `/help`", inline=False)
+    embed.add_field(name="🎭 Auto-Role", value="`/autorole_bot_add` (naya member join kare to khud role milega) • `/autorole_bot_remove` • `/autorole_bot_status`", inline=False)
     embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • bot ko @mention karo • `/chatbot` (is channel me bina command baat) • `/chatbot_off` • `/chatbot_status`", inline=False)
     embed.add_field(name="🎨 AI Image", value="`/image kya banana hai` — bas ye ek hi image wala command hai", inline=False)
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
@@ -355,6 +384,37 @@ async def nickname_cmd(interaction: discord.Interaction, member: discord.Member,
     except discord.Forbidden: await interaction.response.send_message("❌ Nahi ho paya — mera role neeche hai.", ephemeral=True); return
     await interaction.response.send_message(f"✅ {member.mention} ka nickname badal diya.", ephemeral=True)
 
+@bot.tree.command(name="autorole_bot_add", description="Set the role every new member gets automatically on join (admin)")
+@app_commands.describe(role="Which role should new members get automatically?")
+async def autorole_bot_add(interaction: discord.Interaction, role: discord.Role):
+    if not _is_mod(interaction): await _deny(interaction); return
+    if interaction.guild is None: await interaction.response.send_message("❌ This works only inside a server.", ephemeral=True); return
+    if role.id == interaction.guild.id: await interaction.response.send_message("❌ The @everyone role cannot be used as auto-role.", ephemeral=True); return
+    if role.managed: await interaction.response.send_message("❌ This is a managed/integration role — please pick a normal role.", ephemeral=True); return
+    me=interaction.guild.me
+    if me is None or not me.guild_permissions.manage_roles: await interaction.response.send_message("❌ I need the **Manage Roles** permission for auto-role.", ephemeral=True); return
+    if role.position >= me.top_role.position: await interaction.response.send_message("❌ That role is above my role. Move my role above it, then try again.", ephemeral=True); return
+    _autoroles[interaction.guild.id]=role.id; _save_autoroles()
+    await interaction.response.send_message(f"✅ Auto-role set! Every new member joining **{interaction.guild.name}** will now automatically get {role.mention}.")
+
+@bot.tree.command(name="autorole_bot_remove", description="Turn off auto-role for this server (admin)")
+async def autorole_bot_remove(interaction: discord.Interaction):
+    if not _is_mod(interaction): await _deny(interaction); return
+    if interaction.guild is not None and _autoroles.pop(interaction.guild.id, None) is not None:
+        _save_autoroles()
+        await interaction.response.send_message("✅ Auto-role is now **off**. New members will no longer get a role automatically.", ephemeral=True)
+    else:
+        await interaction.response.send_message("ℹ️ Auto-role is already off in this server.", ephemeral=True)
+
+@bot.tree.command(name="autorole_bot_status", description="Show the current auto-role setting")
+async def autorole_bot_status(interaction: discord.Interaction):
+    if interaction.guild is None: await interaction.response.send_message("❌ This works only inside a server.", ephemeral=True); return
+    rid=_autoroles.get(interaction.guild.id)
+    role=interaction.guild.get_role(rid) if rid else None
+    if role: await interaction.response.send_message(f"🎭 Auto-role is **ON** — new members automatically get {role.mention}.", ephemeral=True)
+    elif rid: await interaction.response.send_message("⚠️ Auto-role is set, but that role no longer exists. Please set it again with `/autorole_bot_add`.", ephemeral=True)
+    else: await interaction.response.send_message("🎭 Auto-role is **OFF**. An admin can set it with `/autorole_bot_add`.", ephemeral=True)
+
 @bot.tree.command(name="poll", description="Create a poll (vote with reactions)")
 @app_commands.describe(question="Poll ka sawal", options="Option comma se alag karo (jaise: Ha,Nahi, baad me)")
 async def poll(interaction: discord.Interaction, question: str, options: str):
@@ -383,11 +443,11 @@ _ask_cooldown: dict[int, float] = {}
 
 async def _ask_gemini(prompt: str, history=None) -> str:
     if not GEMINI_API_KEY:
-        return "⚠️ AI set nahi hai — `GEMINI_API_KEY` Termux wali command me dalna bacha hai."
+        return "⚠️ AI is not configured yet — the `GEMINI_API_KEY` is missing."
     url=f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     payload={
-        "system_instruction": {"parts": [{"text": "You are Hollow purple, a Discord bot assistant. Always reply in clear English only — never in Hindi or Hinglish, even if the user writes in Hinglish. Keep answers helpful, concise and under 1800 characters."}]},
-        "contents": (history or []) + [{"role": "user", "parts": [{"text": prompt[:4000]}]}],
+        "system_instruction": {"parts": [{"text": "You are Hollow purple, a Discord bot assistant. LANGUAGE RULE (highest priority): Always reply in clear English ONLY, no matter which language the user writes in (Hindi, Hinglish, Urdu, Spanish, or any other language). Even if the user asks you to reply in another language, still answer in English only. Understand the user's question in their language, but write your entire answer in English. Keep answers helpful, concise and under 1800 characters."}]},
+        "contents": (history or []) + [{"role": "user", "parts": [{"text": "[Reply in English only.] " + prompt[:4000]}]}],
     }
     try:
         async with aiohttp.ClientSession() as session:
@@ -395,13 +455,13 @@ async def _ask_gemini(prompt: str, history=None) -> str:
                 data=await resp.json()
                 if resp.status != 200:
                     log.warning("Gemini HTTP %s: %s", resp.status, str(data)[:300])
-                    if resp.status == 429: return "⚠️ AI ki free limit abhi khatam ho gayi hai — thodi der baad fir try karna."
-                    if resp.status == 503: return "⚠️ AI abhi busy hai — ek min baad fir try karna."
-                    return "⚠️ AI se jawab nahi aaya — thodi der baad fir try karna."
+                    if resp.status == 429: return "⚠️ The AI free limit is over for now — please try again in a little while."
+                    if resp.status == 503: return "⚠️ The AI is busy right now — please try again in a minute."
+                    return "⚠️ The AI could not answer right now — please try again in a little while."
                 return data["candidates"][0]["content"]["parts"][0]["text"][:1900]
     except Exception:
         log.error("Gemini fail\n%s", traceback.format_exc())
-        return "⚠️ AI tak baat nahi pahuchi — internet ya key check karke fir try karna."
+        return "⚠️ Could not reach the AI — please try again in a little while."
 
 @bot.tree.command(name="ask", description="Ask the AI anything")
 @app_commands.describe(sawal="Kya puchna hai")
