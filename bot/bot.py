@@ -32,7 +32,7 @@ WELCOME_CHANNEL_ID=int(os.environ.get("WELCOME_CHANNEL_ID","0") or 0)
 DM_TEXT=os.environ.get("DM_TEXT","Hey {user} 👋\n\n**{guild}** me swagat hai!\n\n1. Pehle <#rules> padho\n2. Neeche **Verify** dabao\n3. Tabhi channels khulenge")
 REQUIRE_VERIFY=os.environ.get("REQUIRE_VERIFY","1")=="1"
 GEMINI_API_KEY=os.environ.get("GEMINI_API_KEY","")
-GEMINI_MODEL=os.environ.get("GEMINI_MODEL","gemini-3.1-flash-lite")
+GEMINI_MODEL=os.environ.get("GEMINI_MODEL","gemini-3.5-flash-lite")
 BOT_OWNER_ID=int(os.environ.get("BOT_OWNER_ID","0") or 0)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
@@ -108,6 +108,19 @@ async def on_ready():
                 await owner.send(f"🟢 **NezukoHelper online hai!**\nServers: **{len(bot.guilds)}** | Commands: **{total_cmds}**\nBot ab kaam ke liye ready hai. `/help` se saare commands dekh sakte ho.")
         except Exception:
             pass
+
+
+@bot.tree.error
+async def on_tree_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    log.warning("command error (%s): %s", getattr(interaction.command, "name", "?"), error)
+    msg="⚠️ Kuch galat ho gaya — dobara try Karo. Dikkat rahe to admin ko batao."
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except Exception:
+        pass
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -592,7 +605,7 @@ async def remind_cancel_cmd(interaction: discord.Interaction, reminder_id: int):
 
 _ask_cooldown: dict[int, float] = {}
 
-_GEMINI_FALLBACK_MODELS=["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-flash-latest"]
+_GEMINI_FALLBACK_MODELS=["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-3-flash-preview"]
 async def _ask_pollinations(prompt: str) -> str | None:
     """Last backup AI (Pollinations, bina key ke chalta hai). Gemini fail ho tab use Karo."""
     full=("You are NezukoHelper, a helpful Discord assistant. Reply in clear English ONLY, "
@@ -600,7 +613,7 @@ async def _ask_pollinations(prompt: str) -> str | None:
     url="https://text.pollinations.ai/" + urllib.parse.quote(full, safe="")
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=90)) as resp:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=40)) as resp:
                 if resp.status != 200:
                     log.warning("Pollinations text HTTP %s", resp.status)
                     return None
@@ -628,7 +641,7 @@ async def _ask_gemini(prompt: str, history=None) -> str:
             for model in models:
                 url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
                 try:
-                    async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=45)) as resp:
+                    async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=25)) as resp:
                         data=await resp.json()
                         if resp.status == 200:
                             return data["candidates"][0]["content"]["parts"][0]["text"][:1900]
@@ -1072,9 +1085,15 @@ async def report(interaction: discord.Interaction, member: discord.Member, reaso
     await interaction.channel.send(embed=embed)
     await interaction.response.send_message("✅ Report admin tak bhej di.", ephemeral=True)
 
+_summarize_cooldown: dict[int, float] = {}
+
 @bot.tree.command(name="summarize", description="Summarize recent chat in English bullet points (AI)")
 @app_commands.describe(count="Kitne pichle messages ka summary (5-50, default 20)")
 async def summarize_cmd(interaction: discord.Interaction, count: int = 20):
+    now=time.time()
+    if now - _summarize_cooldown.get(interaction.user.id, 0) < 20:
+        await interaction.response.send_message("⏳ Summary me time lagta hai — 20 second ruk ke fir Karo.", ephemeral=True); return
+    _summarize_cooldown[interaction.user.id]=now
     if interaction.channel is None:
         await interaction.response.send_message("❌ Channel not found.", ephemeral=True); return
     count=max(5, min(50, count))
