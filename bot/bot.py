@@ -912,11 +912,15 @@ async def ask_cmd(interaction: discord.Interaction, sawal: str):
         await interaction.response.send_message("⏳ 5 second ruk ke fir pucho.", ephemeral=True); return
     _ask_cooldown[interaction.user.id]=now
     await interaction.response.defer()
+    soch=await interaction.followup.send("🌸 **Nezuko soch rahi hai...** ✨ _(jawab taiyar ho raha hai)_")
     hist=_memory.setdefault((interaction.guild.id if interaction.guild else 0, interaction.user.id), [])
     jawab=await _ask_gemini(sawal, hist)
     hist += [{"role":"user","parts":[{"text":sawal[:2000]}]}, {"role":"model","parts":[{"text":jawab[:2000]}]}]
     del hist[:-6]
-    await interaction.followup.send(f"**{interaction.user.display_name}:** {sawal}\n\n{jawab}")
+    try:
+        await soch.edit(content=f"**{interaction.user.display_name}:** {sawal}\n\n{jawab}")
+    except Exception:
+        await interaction.followup.send(f"**{interaction.user.display_name}:** {sawal}\n\n{jawab}")
 
 _CHATBOT_FILE = Path(__file__).resolve().parent / "chatbot_channels.json"
 def _load_chatbot_state():
@@ -965,11 +969,22 @@ async def on_message(message: discord.Message):
             if now - _ask_cooldown.get(message.author.id, 0) >= 5:
                 _ask_cooldown[message.author.id]=now
                 hist=_memory.setdefault((message.guild.id if message.guild else 0, message.author.id), [])
+                soch=None
+                try:
+                    soch=await message.reply("🌸 **Nezuko soch rahi hai...** ✨ _(jawab taiyar ho raha hai)_", mention_author=False)
+                except Exception:
+                    pass
                 async with message.channel.typing():
                     jawab=await _ask_gemini(sawal, hist)
                 hist += [{"role":"user","parts":[{"text":sawal[:2000]}]}, {"role":"model","parts":[{"text":jawab[:2000]}]}]
                 del hist[:-6]
-                await message.reply(jawab)
+                if soch is not None:
+                    try:
+                        await soch.edit(content=jawab)
+                    except Exception:
+                        await message.reply(jawab)
+                else:
+                    await message.reply(jawab)
     await bot.process_commands(message)
 
 @bot.tree.command(name="chatbot", description="Tag-only AI chat for this channel: NezukoHelper replies only when mentioned (admin)")
@@ -1066,13 +1081,18 @@ async def image_cmd(interaction: discord.Interaction, vivaran: str):
         await interaction.response.send_message("⏳ Image me time lagta hai — 15 second ruk ke fir bano.", ephemeral=True); return
     _image_cooldown[interaction.user.id]=now
     await interaction.response.defer()
+    ban_rahi=await interaction.followup.send("🎨 **Nezuko image bana rahi hai...** 🌸 _(thoda time lagega)_")
     try:
         data=await _make_image(vivaran+", high quality, detailed, vibrant")
     except Exception:
         log.error("image fail\n%s", traceback.format_exc())
-        await interaction.followup.send("⚠️ Image nahi ban payi — thodi der baad fir try karna.")
+        try: await ban_rahi.edit(content="⚠️ Image nahi ban payi — thodi der baad fir try karna.")
+        except Exception: await interaction.followup.send("⚠️ Image nahi ban payi — thodi der baad fir try karna.")
         return
-    await interaction.followup.send(content=f"🎨 **{interaction.user.display_name}** ke liye: {vivaran}", file=discord.File(io.BytesIO(data), filename="ai-image.jpg"))
+    try:
+        await ban_rahi.edit(content=f"🎨 **{interaction.user.display_name}** ke liye: {vivaran}", attachments=[discord.File(io.BytesIO(data), filename="ai-image.jpg")])
+    except Exception:
+        await interaction.followup.send(content=f"🎨 **{interaction.user.display_name}** ke liye: {vivaran}", file=discord.File(io.BytesIO(data), filename="ai-image.jpg"))
 
 @bot.tree.command(name="report", description="Report a member to the admins")
 @app_commands.describe(member="Kis ki report karni hai", reason="Kya galti ki usne")
