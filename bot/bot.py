@@ -2177,6 +2177,11 @@ async def play_cmd(interaction: discord.Interaction, song: str):
         await lag.edit(content=f"🎵 **Mil gaya:** {track['title']} — baj raha hai...")
         await _play_next(interaction.guild)
 
+@bot.tree.command(name="p", description="Shortcut of /play — play a song in your voice channel")
+@app_commands.describe(song="Gaane ka naam ya YouTube link")
+async def p_cmd(interaction: discord.Interaction, song: str):
+    await play_cmd.callback(interaction, song)
+
 @bot.tree.command(name="skip", description="Skip the current song")
 async def skip_cmd(interaction: discord.Interaction):
     vc=interaction.guild.voice_client if interaction.guild else None
