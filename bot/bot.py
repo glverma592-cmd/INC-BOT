@@ -64,6 +64,7 @@ class VerifyButton(discord.ui.View):
 async def setup_hook():
     bot.add_view(VerifyButton())
     bot.add_view(GiveawayView())
+    bot.add_view(MusicPanelView())
     # SIRF global sync — guild copies banaoge to Discord me har command 2-2 dikhega
     try:
         await bot.tree.sync()
@@ -2097,7 +2098,9 @@ _YTDL_OPTS={"format": "bestaudio/best", "noplaylist": True, "quiet": True, "no_w
 _FFMPEG_OPTS={"before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5", "options": "-vn"}
 _music_state: dict[int, dict] = {}
 def _music_of(guild_id: int) -> dict:
-    return _music_state.setdefault(guild_id, {"queue": [], "current": None, "text_channel": None})
+    st=_music_state.setdefault(guild_id, {"queue": [], "current": None, "text_channel": None, "autoplay": True, "manual_stop": False})
+    st.setdefault("autoplay", True); st.setdefault("manual_stop", False)
+    return st
 def _yt_extract(query: str) -> dict:
     with _yt_dlp.YoutubeDL(_YTDL_OPTS) as ydl:
         info=ydl.extract_info(query, download=False)
@@ -2105,14 +2108,46 @@ def _yt_extract(query: str) -> dict:
             entries=[e for e in info["entries"] if e]
             if not entries: raise RuntimeError("no result")
             info=entries[0]
-        return {"title": info.get("title", "Unknown song"), "url": info.get("url"), "webpage": info.get("webpage_url", ""), "duration": info.get("duration") or 0}
+        return {"title": info.get("title", "Unknown song"), "url": info.get("url"), "webpage": info.get("webpage_url", ""), "duration": info.get("duration") or 0, "vid": info.get("id", "")}
+def _yt_similar(track: dict) -> dict | None:
+    """Uske gaane jaisa (similar) gaana dhundo — autoplay ke liye."""
+    base=(track.get("title") or "").strip()
+    if not base: return None
+    opts=dict(_YTDL_OPTS); opts["default_search"]="ytsearch5:"
+    with _yt_dlp.YoutubeDL(opts) as ydl:
+        info=ydl.extract_info(base + " similar songs", download=False)
+        for e in (info.get("entries") or []):
+            if not e: continue
+            if e.get("id") and e.get("id") != track.get("vid"):
+                return {"title": e.get("title", "Unknown song"), "url": e.get("url"), "webpage": e.get("webpage_url", ""), "duration": e.get("duration") or 0, "vid": e.get("id", ""), "requester": "Autoplay 🔀"}
+    return None
+
 async def _play_next(guild: discord.Guild):
     st=_music_of(guild.id)
     vc=guild.voice_client
     if vc is None: return
-    if not st["queue"]:
+    if st.get("manual_stop"):
         st["current"]=None
         return
+    if not st["queue"]:
+        last=st.get("current")
+        if st.get("autoplay", True) and last and _yt_dlp is not None:
+            try:
+                sim=await asyncio.get_event_loop().run_in_executor(None, _yt_similar, last)
+            except Exception:
+                sim=None
+            if sim:
+                st["queue"].append(sim)
+                ch=st.get("text_channel")
+                if ch is not None:
+                    try: await ch.send(f"🔀 **Autoplay:** Gaana khatam, similar gaana la rahi hu... 🎵")
+                    except Exception: pass
+            else:
+                st["current"]=None
+                return
+        else:
+            st["current"]=None
+            return
     track=st["queue"].pop(0)
     st["current"]=track
     try:
@@ -2136,8 +2171,79 @@ async def _play_next(guild: discord.Guild):
         return
     ch=st.get("text_channel")
     if ch is not None:
-        try: await ch.send(f"🎵 **Now Playing:** {track['title']}\n_(Requested by {track['requester']})_")
+        try:
+            await ch.send(f"🎵 **Now Playing:** {track['title']}\n_(Requested by {track['requester']})_\n🔀 Autoplay: **{'ON' if st.get('autoplay', True) else 'OFF'}** _(Panel se control Karo 👇)_", view=MusicPanelView())
         except Exception: pass
+
+class MusicPanelView(discord.ui.View):
+    """Music control panel — Now Playing message ke neeche lage button."""
+    def __init__(self): super().__init__(timeout=None)
+
+    async def _vc(self, interaction: discord.Interaction):
+        vc=interaction.guild.voice_client if interaction.guild else None
+        if vc is None:
+            await interaction.response.send_message("ℹ️ Nezuko abhi VC me nahi hai — pehle `/play` se gaana lagao.", ephemeral=True)
+            return None
+        user_voice=getattr(interaction.user, "voice", None)
+        if not user_voice or not user_voice.channel or user_voice.channel != vc.channel:
+            await interaction.response.send_message("❌ Panel use karne ke liye usi VC me hona padega jisme gaana baj raha hai.", ephemeral=True)
+            return None
+        return vc
+
+    @discord.ui.button(label="Pause/Resume", emoji="⏯️", style=discord.ButtonStyle.primary, custom_id="music:pause")
+    async def btn_pause(self, interaction: discord.Interaction, button: discord.ui.Button):
+        vc=await self._vc(interaction)
+        if vc is None: return
+        if vc.is_playing():
+            vc.pause(); await interaction.response.send_message("⏸️ **Paused** (panel)", ephemeral=True)
+        elif vc.is_paused():
+            vc.resume(); await interaction.response.send_message("▶️ **Resumed** (panel)", ephemeral=True)
+        else:
+            await interaction.response.send_message("ℹ️ Kuch baj hi nahi raha.", ephemeral=True)
+
+    @discord.ui.button(label="Skip", emoji="⏭️", style=discord.ButtonStyle.secondary, custom_id="music:skip")
+    async def btn_skip(self, interaction: discord.Interaction, button: discord.ui.Button):
+        vc=await self._vc(interaction)
+        if vc is None: return
+        if vc.is_playing() or vc.is_paused():
+            vc.stop(); await interaction.response.send_message("⏭️ **Skipped!** (panel)", ephemeral=True)
+        else:
+            await interaction.response.send_message("ℹ️ Kuch baj hi nahi raha.", ephemeral=True)
+
+    @discord.ui.button(label="Stop", emoji="⏹️", style=discord.ButtonStyle.danger, custom_id="music:stop")
+    async def btn_stop(self, interaction: discord.Interaction, button: discord.ui.Button):
+        vc=await self._vc(interaction)
+        if vc is None: return
+        st=_music_of(interaction.guild.id)
+        st["queue"].clear(); st["current"]=None; st["manual_stop"]=True
+        try: vc.stop()
+        except Exception: pass
+        await vc.disconnect()
+        for child in self.children: child.disabled=True
+        try: await interaction.message.edit(view=self)
+        except Exception: pass
+        await interaction.response.send_message("⏹️ **Music band!** (panel) Nezuko VC se bahar aa gayi.")
+
+    @discord.ui.button(label="Queue", emoji="🎵", style=discord.ButtonStyle.secondary, custom_id="music:queue")
+    async def btn_queue(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.guild is None:
+            await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+        st=_music_of(interaction.guild.id)
+        cur=st.get("current")
+        if not cur and not st["queue"]:
+            await interaction.response.send_message("🎵 Queue khaali hai.", ephemeral=True); return
+        lines=[]
+        if cur: lines.append(f"▶️ **Now Playing:** {cur['title']}")
+        for i, t in enumerate(st["queue"][:10], 1): lines.append(f"{i}. {t['title']}")
+        await interaction.response.send_message("🎵 **Queue:**\n" + "\n".join(lines), ephemeral=True)
+
+    @discord.ui.button(label="Autoplay", emoji="🔀", style=discord.ButtonStyle.success, custom_id="music:autoplay")
+    async def btn_autoplay(self, interaction: discord.Interaction, button: discord.ui.Button):
+        vc=await self._vc(interaction)
+        if vc is None: return
+        st=_music_of(interaction.guild.id)
+        st["autoplay"]=not st.get("autoplay", True)
+        await interaction.response.send_message(f"🔀 **Autoplay {'ON' if st['autoplay'] else 'OFF'}!** Gaana khatam ho to similar gaana {'khud chalega' if st['autoplay'] else 'nahi chala karega'}.", ephemeral=True)
 
 @bot.tree.command(name="play", description="Play a song in your voice channel (search or YouTube link)")
 @app_commands.describe(song="Gaane ka naam ya YouTube link")
@@ -2168,6 +2274,7 @@ async def play_cmd(interaction: discord.Interaction, song: str):
         await lag.edit(content="⚠️ Ye gaana nahi mila — naam sahi likh ke fir try Karo."); return
     track["requester"]=interaction.user.display_name
     st=_music_of(interaction.guild.id)
+    st["manual_stop"]=False
     st["text_channel"]=interaction.channel
     if vc.is_playing() or vc.is_paused():
         st["queue"].append(track)
@@ -2196,7 +2303,7 @@ async def stop_cmd(interaction: discord.Interaction):
     if interaction.guild is None:
         await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
     st=_music_of(interaction.guild.id)
-    st["queue"].clear(); st["current"]=None
+    st["queue"].clear(); st["current"]=None; st["manual_stop"]=True
     vc=interaction.guild.voice_client
     if vc:
         try: vc.stop()
@@ -2248,6 +2355,27 @@ async def nowplaying_cmd(interaction: discord.Interaction):
         await interaction.response.send_message(f"🎵 **Now Playing:** {cur['title']}{mmss}\n_(Requested by {cur['requester']})_")
     else:
         await interaction.response.send_message("ℹ️ Abhi kuch nahi baj raha — `/play` se lagao.", ephemeral=True)
+
+@bot.tree.command(name="autoplay", description="Autoplay: song khatam ho to similar song khud chalega (On/Off/Status)")
+@app_commands.describe(action="Choose On, Off, or Status — default is Status")
+@app_commands.choices(action=[
+    app_commands.Choice(name="On — similar songs auto-chalenge", value="on"),
+    app_commands.Choice(name="Off — sirf queue ke songs", value="off"),
+    app_commands.Choice(name="Status — setting dekho", value="status"),
+])
+async def autoplay_cmd(interaction: discord.Interaction, action: str = "status"):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Autoplay sirf server me chalta hai.", ephemeral=True); return
+    st=_music_of(interaction.guild.id)
+    if action == "on":
+        st["autoplay"]=True
+        await interaction.response.send_message("🔀 **Autoplay ON!** Jo gaana daloge wahi chalega, khatam ho to usi type ka similar gaana khud aa jayega. 🎵")
+    elif action == "off":
+        st["autoplay"]=False
+        await interaction.response.send_message("🔀 **Autoplay OFF.** Ab sirf wahi chalega jo `/play` ya `/p` se daloge.")
+    else:
+        state="ON ✅" if st.get("autoplay", True) else "OFF"
+        await interaction.response.send_message(f"🔀 Autoplay is **{state}** in this server.")
 
 # ---- GitHub -> Discord ----
 async def github_handler(request: web.Request):
