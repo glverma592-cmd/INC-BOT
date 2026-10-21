@@ -38,6 +38,7 @@ BOT_OWNER_ID=int(os.environ.get("BOT_OWNER_ID","0") or 0)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 log=logging.getLogger("autodm")
 
+_startup_dm_sent=False
 intents=discord.Intents.default()
 intents.members=True
 intents.message_content=True
@@ -95,9 +96,22 @@ async def on_ready():
             log.warning("duplicate-cleanup fail\n%s", traceback.format_exc())
     _restore_giveaways()
     _restore_reminders()
+    # Owner ko ek baar startup DM — bot online hua to owner ko Discord me khud khabar
+    global _startup_dm_sent
+    if not _startup_dm_sent:
+        _startup_dm_sent=True
+        try:
+            info=await bot.application_info()
+            owner=info.owner
+            if owner is not None:
+                total_cmds=len(bot.tree.get_commands())
+                await owner.send(f"🟢 **NezukoHelper online hai!**\nServers: **{len(bot.guilds)}** | Commands: **{total_cmds}**\nBot ab kaam ke liye ready hai. `/help` se saare commands dekh sakte ho.")
+        except Exception:
+            pass
 
 @bot.event
 async def on_member_join(member: discord.Member):
+    await _check_antiraid(member)
     # Auto-role: set kiya hua role naye member ko khud mil jayega
     rid=_autoroles.get(member.guild.id)
     if rid:
@@ -216,10 +230,10 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="🎁 Giveaway", value="`/giveaway` — prize, time (jaise `30m`, `2h`, `1d`) aur winners set karke stylish giveaway start karo. Time khatam hote hi winner automatic announce hoga.", inline=False)
     embed.add_field(name="⭐ Levels • Tickets • Reminders", value="Chat karne par XP milega — `/rank` • `/leaderboard` • Support ke liye `/ticket`, band karne ko `/close` • `/reminders` • `/remind_cancel`", inline=False)
     embed.add_field(name="🪙 Economy", value="`/balance` • `/daily` (roz free coins) • `/pay` • `/gamble`", inline=False)
-    embed.add_field(name="🛡️ AutoMod", value="`/antilink` • `/antispam` — On karne par normal members ke link/spam messages khud delete ho jayenge (mods exempt).", inline=False)
+    embed.add_field(name="🛡️ AutoMod", value="`/antilink` • `/antispam` • `/badwords` • `/antiraid` • `/setmodlog` — link, spam, gaali khud delete + raid par alert + saari moderation ka log (mods exempt).", inline=False)
     embed.add_field(name="🎭 Auto-Role", value="`/autorole_bot_add` (naya member join kare to khud role milega) • `/autorole_bot_remove` • `/autorole_bot_status`", inline=False)
     embed.add_field(name="👑 No Prefix (Owner Only)", value="`/noprefix` — granted member can chat with the AI without `/ask` or a mention. Power lasts **2 months**.", inline=False)
-    embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • `/chatbot` — isse chalu channel me NezukoHelper sirf tab jawab degi jab use @tag karke kuch bola jaye", inline=False)
+    embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • `/chatbot` • `/summarize` — sawal pucho, tag-chat chalu Karo, ya lambi chat ka short summary banao", inline=False)
     embed.add_field(name="🎨 AI Image", value="`/image kya banana hai` — bas ye ek hi image wala command hai", inline=False)
     embed.add_field(name="✨ More Utility & Fun", value="`/invite` `/support` `/rules` `/suggest` `/coinflip` `/dice` `/choose` `/eightball` `/rps` `/calc` `/password` `/qr` `/color` `/emojiinfo` `/channelinfo` `/roles` `/banner` `/afk` `/snipe` `/timer`", inline=False)
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
@@ -579,8 +593,27 @@ async def remind_cancel_cmd(interaction: discord.Interaction, reminder_id: int):
 _ask_cooldown: dict[int, float] = {}
 
 _GEMINI_FALLBACK_MODELS=["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-flash-latest"]
+async def _ask_pollinations(prompt: str) -> str | None:
+    """Last backup AI (Pollinations, bina key ke chalta hai). Gemini fail ho tab use Karo."""
+    full=("You are NezukoHelper, a helpful Discord assistant. Reply in clear English ONLY, "
+          "concise and under 1500 characters.\n\nUser: " + prompt[:3000])
+    url="https://text.pollinations.ai/" + urllib.parse.quote(full, safe="")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=90)) as resp:
+                if resp.status != 200:
+                    log.warning("Pollinations text HTTP %s", resp.status)
+                    return None
+                text=(await resp.text()).strip()
+                return text[:1900] if text else None
+    except Exception:
+        log.warning("Pollinations text fail\n%s", traceback.format_exc())
+        return None
+
 async def _ask_gemini(prompt: str, history=None) -> str:
     if not GEMINI_API_KEY:
+        backup=await _ask_pollinations(prompt)
+        if backup: return backup
         return "⚠️ AI is not configured yet — the `GEMINI_API_KEY` is missing."
     payload={
         "system_instruction": {"parts": [{"text": "You are NezukoHelper, a Discord bot assistant. LANGUAGE RULE (highest priority): Always reply in clear English ONLY, no matter which language the user writes in (Hindi, Hinglish, Urdu, Spanish, or any other language). Even if the user asks you to reply in another language, still answer in English only. Understand the user's question in their language, but write your entire answer in English. Keep answers helpful, concise and under 1800 characters."}]},
@@ -609,7 +642,12 @@ async def _ask_gemini(prompt: str, history=None) -> str:
                     continue
     except Exception:
         log.error("Gemini fail\n%s", traceback.format_exc())
+        backup=await _ask_pollinations(prompt)
+        if backup: return backup
         return "⚠️ Could not reach the AI — please try again in a little while."
+    # Gemini ke saare models fail — last backup (bina key wala AI) try Karo
+    backup=await _ask_pollinations(prompt)
+    if backup: return backup
     if last_status == 429: return "⚠️ The AI free limit is over for now — please try again in a little while."
     if last_status == 503: return "⚠️ The AI is busy right now — please try again in a minute."
     return "⚠️ The AI could not answer right now — please try again in a little while."
@@ -898,6 +936,8 @@ async def on_message(message: discord.Message):
         return
     if await _check_antispam(message):
         return
+    if await _check_badwords(message):
+        return
     await _award_xp(message)
     is_mention = bool(bot.user and bot.user in message.mentions)
     is_tag_chatbot = _tag_chatbot_master_on and message.channel.id in _tag_chatbot_channels
@@ -1032,6 +1072,73 @@ async def report(interaction: discord.Interaction, member: discord.Member, reaso
     await interaction.channel.send(embed=embed)
     await interaction.response.send_message("✅ Report admin tak bhej di.", ephemeral=True)
 
+@bot.tree.command(name="summarize", description="Summarize recent chat in English bullet points (AI)")
+@app_commands.describe(count="Kitne pichle messages ka summary (5-50, default 20)")
+async def summarize_cmd(interaction: discord.Interaction, count: int = 20):
+    if interaction.channel is None:
+        await interaction.response.send_message("❌ Channel not found.", ephemeral=True); return
+    count=max(5, min(50, count))
+    await interaction.response.defer()
+    lines=[]
+    try:
+        async for m in interaction.channel.history(limit=count):
+            if m.author.bot or not (m.content or "").strip(): continue
+            lines.append(f"{m.author.display_name}: {m.content[:200]}")
+    except Exception:
+        await interaction.followup.send("⚠️ Chat history nahi padh paya — Message History permission chahiye."); return
+    lines.reverse()
+    if len(lines) < 3:
+        await interaction.followup.send("ℹ️ Summary banane ke liye is channel me kaafi messages nahi hai."); return
+    jawab=await _ask_gemini("Summarize this Discord chat in clear English bullet points (max 6 points, short):\n\n" + "\n".join(lines))
+    await interaction.followup.send(f"📝 **Last {len(lines)} messages ka summary:**\n\n{jawab}")
+
+_JOKES=[
+    "Why do gamers never get lost? Because they always follow the mini-map! 🎮",
+    "Why did the computer go to the doctor? It had a virus! 💻",
+    "Why don't scientists trust atoms? Because they make up everything! ⚛️",
+    "What do you call a fish without eyes? A fsh! 🐟",
+    "Why did the scarecrow win an award? Because he was outstanding in his field! 🌾",
+    "Why do programmers prefer dark mode? Because light attracts bugs! 🐛",
+    "What did one wall say to the other? I'll meet you at the corner! 🧱",
+    "Why did the bicycle fall over? It was two-tired! 🚲",
+    "How does a Discord mod sleep? They ban-ish their worries first! 😴",
+    "Why was the math book sad? It had too many problems! 📚",
+]
+_FACTS=[
+    "Honey kabhi kharab nahi hota — 3000 saal purana honey bhi khane layak mila hai! 🍯",
+    "Octopus ke 3 dil hote hai! 🐙",
+    "Video games khelne se decision-making speed improve hoti hai, studies ke hisab se. 🎮",
+    "Lightning suraj ki surface se 5 guna zyada garam hoti hai! ⚡",
+    "Insaan apni zindagi ke lagbhag 6 mahine traffic lights par bitata hai. 🚦",
+    "Sea otters sote time haath pakadte hai taaki beh na jaye. 🦦",
+    "Pehla computer bug asal me ek moth (keeda) tha jo machine me phasa mila tha! 🐛",
+    "Banana aur insaan ka DNA lagbhag 60% milta hai. 🍌",
+    "Discord 2015 me launch hua tha aur pehle gamers ke liye banaya gaya tha. 💬",
+    "Ek din me tumhara dil lagbhag 100,000 baar dhadakta hai. ❤️",
+]
+_QUOTES=[
+    "\"Success is not final, failure is not fatal: it is the courage to continue that counts.\" — Winston Churchill 💪",
+    "\"The grind never lies. Roz thoda better bano.\" 🔥",
+    "\"Discipline is choosing what you want most over what you want now.\" 🎯",
+    "\"You don't have to be extreme, just consistent.\" 📈",
+    "\"Hard days make strong players.\" 🎮",
+    "\"Dream big, start small, act now.\" 🚀",
+    "\"Winners are ordinary people with extraordinary determination.\" 🏆",
+    "\"Focus on progress, not perfection.\" ✨",
+]
+
+@bot.tree.command(name="joke", description="Get a random funny joke")
+async def joke_cmd(interaction: discord.Interaction):
+    await interaction.response.send_message(f"😂 {random.choice(_JOKES)}")
+
+@bot.tree.command(name="fact", description="Get a random interesting fact")
+async def fact_cmd(interaction: discord.Interaction):
+    await interaction.response.send_message(f"🧠 {random.choice(_FACTS)}")
+
+@bot.tree.command(name="quote", description="Get a motivational quote")
+async def quote_cmd(interaction: discord.Interaction):
+    await interaction.response.send_message(f"💡 {random.choice(_QUOTES)}")
+
 # ---------------- 20 COMMON UTILITY & FUN COMMANDS ----------------
 _AFK_FILE = Path(__file__).resolve().parent / "afk.json"
 def _load_afk() -> dict[str, dict]:
@@ -1056,7 +1163,7 @@ async def _process_afk_message(message: discord.Message):
         return
     author_key=_afk_key(message.guild.id, message.author.id)
     if author_key in _afk_data:
-        old_reason=_afk_data.pop(author_key, {}).get("reason", "")
+        _afk_data.pop(author_key, {})
         _save_afk()
         try:
             await message.channel.send(f"👋 Welcome back, {message.author.mention}! Your AFK has been removed.", delete_after=6)
@@ -1650,6 +1757,25 @@ def _antilink_enabled(guild_id: int) -> bool:
     return bool(_automod.get(str(guild_id), {}).get("antilink", False))
 def _antispam_enabled(guild_id: int) -> bool:
     return bool(_automod.get(str(guild_id), {}).get("antispam", False))
+def _badwords_enabled(guild_id: int) -> bool:
+    return bool(_automod.get(str(guild_id), {}).get("badwords", False))
+def _antiraid_enabled(guild_id: int) -> bool:
+    return bool(_automod.get(str(guild_id), {}).get("antiraid", False))
+_DEFAULT_BADWORDS=["fuck", "bitch", "bastard", "asshole", "madarchod", "behenchod", "bhenchod", "chutiya", "gandu", "haramkhor", "randi", "saala kutta"]
+def _badword_list(guild_id: int) -> list:
+    custom=_automod.get(str(guild_id), {}).get("custom_badwords", [])
+    return _DEFAULT_BADWORDS + [str(w).lower() for w in custom]
+async def _modlog(guild, text: str):
+    """Server ka mod-log channel set ho to waha moderation ki report bhejo."""
+    if guild is None: return
+    ch_id=_automod.get(str(guild.id), {}).get("modlog_channel")
+    if not ch_id: return
+    ch=guild.get_channel(int(ch_id))
+    if ch is None: return
+    try:
+        await ch.send(text)
+    except Exception:
+        pass
 _LINK_MARKERS=("http://", "https://", "www.", "discord.gg/", "discord.com/invite/", "t.me/", "bit.ly/", "tinyurl.com/")
 async def _check_antilink(message: discord.Message) -> bool:
     """Anti-link ON ho to normal member ka link wala message delete kar do. Mods exempt."""
@@ -1668,6 +1794,7 @@ async def _check_antilink(message: discord.Message) -> bool:
     except Exception:
         pass
     log.info("antilink: %s ka link message delete (guild %s)", message.author, message.guild.id)
+    await _modlog(message.guild, f"🛡️ **Anti-Link:** {message.author.mention} ka link message delete kiya gaya in {message.channel.mention}")
     return True
 
 # ---------------- AUTOMOD: ANTI-SPAM ----------------
@@ -1701,6 +1828,7 @@ async def _check_antispam(message: discord.Message) -> bool:
         except Exception:
             pass
     log.info("antispam: %s ka spam message delete (guild %s)", message.author, message.guild.id)
+    await _modlog(message.guild, f"🛡️ **Anti-Spam:** {message.author.mention} ka spam message delete kiya gaya in {message.channel.mention}")
     return True
 
 @bot.tree.command(name="antilink", description="AutoMod: automatically delete links from normal members (admin)")
@@ -1748,6 +1876,159 @@ async def antispam_cmd(interaction: discord.Interaction, action: str = "on"):
     else:
         state="ON ✅" if _antispam_enabled(interaction.guild.id) else "OFF"
         await interaction.response.send_message(f"🛡️ Anti-Spam is currently **{state}** in this server.", ephemeral=True)
+
+async def _check_badwords(message: discord.Message) -> bool:
+    """Bad-words filter ON ho to gaali wala message delete Karo. Mods exempt."""
+    if message.guild is None: return False
+    if not _badwords_enabled(message.guild.id): return False
+    perms=getattr(message.author, "guild_permissions", None)
+    if perms and (perms.administrator or perms.manage_messages or perms.manage_guild): return False
+    content=(message.content or "").lower()
+    if not content: return False
+    hit=next((w for w in _badword_list(message.guild.id) if w and w in content), None)
+    if not hit: return False
+    try:
+        await message.delete()
+    except Exception:
+        return False
+    try:
+        await message.channel.send(f"🛡️ {message.author.mention} Please keep the chat clean — your message was removed by AutoMod.", delete_after=8)
+    except Exception:
+        pass
+    log.info("badwords: %s ka message delete (guild %s)", message.author, message.guild.id)
+    await _modlog(message.guild, f"🛡️ **Bad-Words:** {message.author.mention} ka message delete kiya gaya in {message.channel.mention}")
+    return True
+
+@bot.tree.command(name="badwords", description="AutoMod: bad-words (gaali) filter for the server (admin)")
+@app_commands.describe(action="On, Off, Status, Add, Remove, or List", word="Add/Remove ke liye word (sirf add/remove par)")
+@app_commands.choices(action=[
+    app_commands.Choice(name="On — filter chalu", value="on"),
+    app_commands.Choice(name="Off — filter band", value="off"),
+    app_commands.Choice(name="Status — setting dekho", value="status"),
+    app_commands.Choice(name="Add — apna word add Karo", value="add"),
+    app_commands.Choice(name="Remove — apna word hatao", value="remove"),
+    app_commands.Choice(name="List — custom words dekho", value="list"),
+])
+async def badwords_cmd(interaction: discord.Interaction, action: str = "on", word: str | None = None):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Bad-words filter sirf server me chalta hai.", ephemeral=True); return
+    if action in ("on", "off", "add", "remove") and not _is_mod(interaction):
+        await _deny(interaction); return
+    gid=str(interaction.guild.id)
+    cfg=_automod.setdefault(gid, {})
+    if action == "on":
+        cfg["badwords"]=True; _save_automod()
+        await interaction.response.send_message("🛡️ **Bad-Words Filter ON!** ✅\nAb gaali wale messages khud delete ho jayenge (mods exempt). Apne words `/badwords add` se jod sakte ho.", ephemeral=True)
+    elif action == "off":
+        cfg["badwords"]=False; _save_automod()
+        await interaction.response.send_message("🛡️ Bad-Words Filter **OFF** kar diya hai.", ephemeral=True)
+    elif action == "add":
+        if not word or len(word.strip()) < 2:
+            await interaction.response.send_message("❌ Add karne ke liye `word` bhi likho.", ephemeral=True); return
+        w=word.strip().lower()
+        custom=cfg.setdefault("custom_badwords", [])
+        if w in custom:
+            await interaction.response.send_message(f"ℹ️ `{w}` already list me hai.", ephemeral=True); return
+        custom.append(w); _save_automod()
+        await interaction.response.send_message(f"✅ `{w}` bad-words list me add ho gaya.", ephemeral=True)
+    elif action == "remove":
+        if not word:
+            await interaction.response.send_message("❌ Remove karne ke liye `word` bhi likho.", ephemeral=True); return
+        w=word.strip().lower()
+        custom=cfg.setdefault("custom_badwords", [])
+        if w in custom:
+            custom.remove(w); _save_automod()
+            await interaction.response.send_message(f"✅ `{w}` list se hata diya.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"ℹ️ `{w}` custom list me nahi hai.", ephemeral=True)
+    elif action == "list":
+        custom=cfg.get("custom_badwords", [])
+        txt=", ".join(f"`{w}`" for w in custom) if custom else "koi custom word nahi hai"
+        await interaction.response.send_message(f"🛡️ Custom bad-words: {txt}\n(Default Hindi/English gaali list hamesha included hai jab filter ON ho.)", ephemeral=True)
+    else:
+        state="ON ✅" if _badwords_enabled(interaction.guild.id) else "OFF"
+        await interaction.response.send_message(f"🛡️ Bad-Words Filter is currently **{state}** in this server.", ephemeral=True)
+
+@bot.tree.command(name="setmodlog", description="Moderation logs ke liye channel set Karo (admin)")
+@app_commands.describe(action="Set, Off, ya Status", channel="Log kis channel me aye (sirf Set par)")
+@app_commands.choices(action=[
+    app_commands.Choice(name="Set — is/selected channel ko mod-log banao", value="set"),
+    app_commands.Choice(name="Off — mod-log band", value="off"),
+    app_commands.Choice(name="Status — current mod-log dekho", value="status"),
+])
+async def setmodlog_cmd(interaction: discord.Interaction, action: str = "set", channel: discord.TextChannel | None = None):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Mod-log sirf server me chalta hai.", ephemeral=True); return
+    if action in ("set", "off") and not _is_mod(interaction):
+        await _deny(interaction); return
+    gid=str(interaction.guild.id)
+    cfg=_automod.setdefault(gid, {})
+    if action == "set":
+        ch=channel or interaction.channel
+        if ch is None:
+            await interaction.response.send_message("❌ Channel nahi mila.", ephemeral=True); return
+        cfg["modlog_channel"]=ch.id; _save_automod()
+        await interaction.response.send_message(f"📋 **Mod-Log set!** Ab saari moderation actions (anti-link, anti-spam, bad-words, ban/unban, raid alert) {ch.mention} me ayengi.", ephemeral=True)
+    elif action == "off":
+        cfg.pop("modlog_channel", None); _save_automod()
+        await interaction.response.send_message("📋 Mod-Log **OFF** kar diya hai.", ephemeral=True)
+    else:
+        ch_id=cfg.get("modlog_channel")
+        ch=interaction.guild.get_channel(int(ch_id)) if ch_id else None
+        await interaction.response.send_message(f"📋 Mod-Log channel: {ch.mention if ch else '**not set**'}", ephemeral=True)
+
+_raid_joins: dict[int, list] = {}
+_raid_alerted: dict[int, float] = {}
+async def _check_antiraid(member: discord.Member):
+    """Anti-Raid ON ho aur 60 sec me 6+ log join kare to mods ko alert Karo."""
+    if not _antiraid_enabled(member.guild.id): return
+    now=time.time()
+    hist=_raid_joins.setdefault(member.guild.id, [])
+    hist[:] = [ts for ts in hist if now - ts <= 60]
+    hist.append(now)
+    if len(hist) < 6: return
+    if now - _raid_alerted.get(member.guild.id, 0) < 300: return
+    _raid_alerted[member.guild.id]=now
+    hist.clear()
+    msg=(f"🚨 **RAID ALERT!** {member.guild.name} me 1 minute ke andar 6+ members join hue hai. "
+         f"Mods dhyan do — suspicious accounts check Karo. (NezukoHelper Anti-Raid)")
+    log.warning("antiraid alert guild %s", member.guild.id)
+    await _modlog(member.guild, msg)
+    ch=getattr(member.guild, "system_channel", None)
+    if ch is not None:
+        try: await ch.send(msg)
+        except Exception: pass
+
+@bot.tree.command(name="antiraid", description="Security: raid (mass join) alert system (admin)")
+@app_commands.describe(action="Choose On, Off, or Status — default is On")
+@app_commands.choices(action=[
+    app_commands.Choice(name="On — raid alert chalu", value="on"),
+    app_commands.Choice(name="Off — raid alert band", value="off"),
+    app_commands.Choice(name="Status — setting dekho", value="status"),
+])
+async def antiraid_cmd(interaction: discord.Interaction, action: str = "on"):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Anti-Raid sirf server me chalta hai.", ephemeral=True); return
+    if action in ("on", "off") and not _is_mod(interaction):
+        await _deny(interaction); return
+    gid=str(interaction.guild.id)
+    if action == "on":
+        _automod.setdefault(gid, {})["antiraid"]=True; _save_automod()
+        await interaction.response.send_message("🚨 **Anti-Raid ON!** ✅\n1 minute me 6+ join hue to mods ko mod-log/system channel me alert ajayega. Pehle `/setmodlog` se log channel set kar lena.", ephemeral=True)
+    elif action == "off":
+        _automod.setdefault(gid, {})["antiraid"]=False; _save_automod()
+        await interaction.response.send_message("🚨 Anti-Raid **OFF** kar diya hai.", ephemeral=True)
+    else:
+        state="ON ✅" if _antiraid_enabled(interaction.guild.id) else "OFF"
+        await interaction.response.send_message(f"🚨 Anti-Raid is currently **{state}** in this server.", ephemeral=True)
+
+@bot.event
+async def on_member_ban(guild: discord.Guild, user: discord.User):
+    await _modlog(guild, f"🔨 **Ban:** {user} ({user.id}) ko server se ban kiya gaya.")
+
+@bot.event
+async def on_member_unban(guild: discord.Guild, user: discord.User):
+    await _modlog(guild, f"♻️ **Unban:** {user} ({user.id}) ka ban hata diya gaya.")
 
 # ---- GitHub -> Discord ----
 async def github_handler(request: web.Request):
