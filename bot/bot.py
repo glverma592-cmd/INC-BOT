@@ -606,6 +606,25 @@ async def remind_cancel_cmd(interaction: discord.Interaction, reminder_id: int):
 _ask_cooldown: dict[int, float] = {}
 
 _GEMINI_FALLBACK_MODELS=["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3-flash-preview"]
+async def _refresh_ke_sath(placeholder, label: str, coro):
+    """Jawab/image bante time placeholder message me har 2 second me timer update Karo."""
+    if placeholder is None:
+        return await coro
+    shuru=time.time()
+    async def _ticker():
+        while True:
+            await asyncio.sleep(2)
+            elapsed=int(time.time() - shuru)
+            try:
+                await placeholder.edit(content=f"{label} ⏱️ {elapsed}s")
+            except Exception:
+                break
+    tick=asyncio.create_task(_ticker())
+    try:
+        return await coro
+    finally:
+        tick.cancel()
+
 async def _ask_pollinations(prompt: str) -> str | None:
     """Last backup AI (Pollinations, bina key ke chalta hai). Gemini fail ho tab use Karo."""
     full=("You are NezukoHelper, but everyone calls you Nezuko — a sweet, friendly anime girl assistant. Talk in a soft, cute, caring tone with a few cute emojis (🌸 ✨) sometimes, never romantic/flirty. Always reply in the SAME language and script as the user's message (English->English, Hindi->Hindi, Hinglish Roman->Hinglish Roman, Marathi->Marathi, any language->same language). If the user asks to switch language, switch. Be concise, under 1500 characters." + "\n\nUser: " + prompt[:3000])
@@ -914,7 +933,7 @@ async def ask_cmd(interaction: discord.Interaction, sawal: str):
     await interaction.response.defer()
     soch=await interaction.followup.send("🌸 **Nezuko soch rahi hai...** ✨ _(jawab taiyar ho raha hai)_")
     hist=_memory.setdefault((interaction.guild.id if interaction.guild else 0, interaction.user.id), [])
-    jawab=await _ask_gemini(sawal, hist)
+    jawab=await _refresh_ke_sath(soch, "🌸 **Nezuko soch rahi hai...** ✨", _ask_gemini(sawal, hist))
     hist += [{"role":"user","parts":[{"text":sawal[:2000]}]}, {"role":"model","parts":[{"text":jawab[:2000]}]}]
     del hist[:-6]
     try:
@@ -975,7 +994,7 @@ async def on_message(message: discord.Message):
                 except Exception:
                     pass
                 async with message.channel.typing():
-                    jawab=await _ask_gemini(sawal, hist)
+                    jawab=await _refresh_ke_sath(soch, "🌸 **Nezuko soch rahi hai...** ✨", _ask_gemini(sawal, hist))
                 hist += [{"role":"user","parts":[{"text":sawal[:2000]}]}, {"role":"model","parts":[{"text":jawab[:2000]}]}]
                 del hist[:-6]
                 if soch is not None:
@@ -1083,7 +1102,7 @@ async def image_cmd(interaction: discord.Interaction, vivaran: str):
     await interaction.response.defer()
     ban_rahi=await interaction.followup.send("🎨 **Nezuko image bana rahi hai...** 🌸 _(thoda time lagega)_")
     try:
-        data=await _make_image(vivaran+", high quality, detailed, vibrant")
+        data=await _refresh_ke_sath(ban_rahi, "🎨 **Nezuko image bana rahi hai...** 🌸", _make_image(vivaran+", high quality, detailed, vibrant"))
     except Exception:
         log.error("image fail\n%s", traceback.format_exc())
         try: await ban_rahi.edit(content="⚠️ Image nahi ban payi — thodi der baad fir try karna.")
