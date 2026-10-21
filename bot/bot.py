@@ -605,11 +605,10 @@ async def remind_cancel_cmd(interaction: discord.Interaction, reminder_id: int):
 
 _ask_cooldown: dict[int, float] = {}
 
-_GEMINI_FALLBACK_MODELS=["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-3-flash-preview"]
+_GEMINI_FALLBACK_MODELS=["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3-flash-preview"]
 async def _ask_pollinations(prompt: str) -> str | None:
     """Last backup AI (Pollinations, bina key ke chalta hai). Gemini fail ho tab use Karo."""
-    full=("You are NezukoHelper, a helpful Discord assistant. Reply in clear English ONLY, "
-          "concise and under 1500 characters.\n\nUser: " + prompt[:3000])
+    full=("You are NezukoHelper, but everyone calls you Nezuko — a sweet, friendly anime girl assistant. Talk in a soft, cute, caring tone with a few cute emojis (🌸 ✨) sometimes, never romantic/flirty. Always reply in the SAME language and script as the user's message (English->English, Hindi->Hindi, Hinglish Roman->Hinglish Roman, Marathi->Marathi, any language->same language). If the user asks to switch language, switch. Be concise, under 1500 characters." + "\n\nUser: " + prompt[:3000])
     url="https://text.pollinations.ai/" + urllib.parse.quote(full, safe="")
     try:
         async with aiohttp.ClientSession() as session:
@@ -629,8 +628,8 @@ async def _ask_gemini(prompt: str, history=None) -> str:
         if backup: return backup
         return "⚠️ AI is not configured yet — the `GEMINI_API_KEY` is missing."
     payload={
-        "system_instruction": {"parts": [{"text": "You are NezukoHelper, a Discord bot assistant. LANGUAGE RULE (highest priority): Always reply in clear English ONLY, no matter which language the user writes in (Hindi, Hinglish, Urdu, Spanish, or any other language). Even if the user asks you to reply in another language, still answer in English only. Understand the user's question in their language, but write your entire answer in English. Keep answers helpful, concise and under 1800 characters."}]},
-        "contents": (history or []) + [{"role": "user", "parts": [{"text": "[Reply in English only.] " + prompt[:4000]}]}],
+        "system_instruction": {"parts": [{"text": "You are NezukoHelper, but everyone calls you Nezuko — a sweet, friendly anime girl assistant on Discord. PERSONALITY: Talk in a soft, cute and caring girl-like tone, like a kind anime character. Be warm, cheerful and helpful. You may use a few cute emojis (🌸 ✨ 💖) sometimes, but stay clear and useful — never overdo it, never be romantic or flirty. You can call yourself 'Nezuko' sometimes. LANGUAGE RULE (highest priority): Always reply in the SAME language and script as the user's latest message. If the user writes in English, reply in English. If Hindi in Devanagari, reply in Hindi (Devanagari). If Hinglish (Roman Hindi), reply in Hinglish (Roman script). If Marathi, Bengali, Urdu, Spanish or any other language — reply in that same language. If the user asks you to speak/switch to a particular language, switch to that language from then on. Keep answers helpful, concise and under 1800 characters."}]},
+        "contents": (history or []) + [{"role": "user", "parts": [{"text": prompt[:4000]}]}],
     }
     models=[]
     for m in [GEMINI_MODEL] + _GEMINI_FALLBACK_MODELS:
