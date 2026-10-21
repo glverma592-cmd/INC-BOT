@@ -607,18 +607,18 @@ _ask_cooldown: dict[int, float] = {}
 
 _GEMINI_FALLBACK_MODELS=["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3-flash-preview"]
 async def _refresh_ke_sath(placeholder, label: str, coro):
-    """Jawab/image bante time placeholder message me har 2 second me timer update Karo."""
+    """Jawab/image bante time placeholder message me har 1 second me timer update Karo."""
     if placeholder is None:
         return await coro
     shuru=time.time()
     async def _ticker():
         while True:
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
             elapsed=int(time.time() - shuru)
             try:
                 await placeholder.edit(content=f"{label} ⏱️ {elapsed}s")
             except Exception:
-                break
+                pass
     tick=asyncio.create_task(_ticker())
     try:
         return await coro
