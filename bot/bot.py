@@ -578,27 +578,41 @@ async def remind_cancel_cmd(interaction: discord.Interaction, reminder_id: int):
 
 _ask_cooldown: dict[int, float] = {}
 
+_GEMINI_FALLBACK_MODELS=["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-flash-latest"]
 async def _ask_gemini(prompt: str, history=None) -> str:
     if not GEMINI_API_KEY:
         return "⚠️ AI is not configured yet — the `GEMINI_API_KEY` is missing."
-    url=f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     payload={
         "system_instruction": {"parts": [{"text": "You are NezukoHelper, a Discord bot assistant. LANGUAGE RULE (highest priority): Always reply in clear English ONLY, no matter which language the user writes in (Hindi, Hinglish, Urdu, Spanish, or any other language). Even if the user asks you to reply in another language, still answer in English only. Understand the user's question in their language, but write your entire answer in English. Keep answers helpful, concise and under 1800 characters."}]},
         "contents": (history or []) + [{"role": "user", "parts": [{"text": "[Reply in English only.] " + prompt[:4000]}]}],
     }
+    models=[]
+    for m in [GEMINI_MODEL] + _GEMINI_FALLBACK_MODELS:
+        if m and m not in models: models.append(m)
+    last_status=0
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=45)) as resp:
-                data=await resp.json()
-                if resp.status != 200:
-                    log.warning("Gemini HTTP %s: %s", resp.status, str(data)[:300])
-                    if resp.status == 429: return "⚠️ The AI free limit is over for now — please try again in a little while."
-                    if resp.status == 503: return "⚠️ The AI is busy right now — please try again in a minute."
-                    return "⚠️ The AI could not answer right now — please try again in a little while."
-                return data["candidates"][0]["content"]["parts"][0]["text"][:1900]
+            for model in models:
+                url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                try:
+                    async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=45)) as resp:
+                        data=await resp.json()
+                        if resp.status == 200:
+                            return data["candidates"][0]["content"]["parts"][0]["text"][:1900]
+                        last_status=resp.status
+                        log.warning("Gemini HTTP %s (model %s): %s", resp.status, model, str(data)[:200])
+                        if resp.status in (400, 401, 403):
+                            break  # key/request galat hai — dusra model bhi nahi chalega
+                        # 429/404/5xx par agla backup model try karo
+                except Exception:
+                    log.warning("Gemini model %s fail\n%s", model, traceback.format_exc())
+                    continue
     except Exception:
         log.error("Gemini fail\n%s", traceback.format_exc())
         return "⚠️ Could not reach the AI — please try again in a little while."
+    if last_status == 429: return "⚠️ The AI free limit is over for now — please try again in a little while."
+    if last_status == 503: return "⚠️ The AI is busy right now — please try again in a minute."
+    return "⚠️ The AI could not answer right now — please try again in a little while."
 
 # ---------------- GIVEAWAY SYSTEM ----------------
 _GIVEAWAY_FILE = Path(__file__).resolve().parent / "giveaways.json"
