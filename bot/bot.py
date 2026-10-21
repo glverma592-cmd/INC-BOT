@@ -219,7 +219,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="🛡️ AutoMod", value="`/antilink` • `/antispam` — On karne par normal members ke link/spam messages khud delete ho jayenge (mods exempt).", inline=False)
     embed.add_field(name="🎭 Auto-Role", value="`/autorole_bot_add` (naya member join kare to khud role milega) • `/autorole_bot_remove` • `/autorole_bot_status`", inline=False)
     embed.add_field(name="👑 No Prefix (Owner Only)", value="`/noprefix` — granted member can chat with the AI without `/ask` or a mention. Power lasts **2 months**.", inline=False)
-    embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • `/chatbot_on` — isse chalu channel me NezukoHelper sirf tab jawab degi jab use @tag karke kuch bola jaye", inline=False)
+    embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • `/chatbot` — isse chalu channel me NezukoHelper sirf tab jawab degi jab use @tag karke kuch bola jaye", inline=False)
     embed.add_field(name="🎨 AI Image", value="`/image kya banana hai` — bas ye ek hi image wala command hai", inline=False)
     embed.add_field(name="✨ More Utility & Fun", value="`/invite` `/support` `/rules` `/suggest` `/coinflip` `/dice` `/choose` `/eightball` `/rps` `/calc` `/password` `/qr` `/color` `/emojiinfo` `/channelinfo` `/roles` `/banner` `/afk` `/snipe` `/timer`", inline=False)
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
@@ -906,14 +906,14 @@ async def on_message(message: discord.Message):
                 await message.reply(jawab)
     await bot.process_commands(message)
 
-@bot.tree.command(name="chatbot_on", description="Tag-only AI chat for this channel: NezukoHelper replies only when mentioned (admin)")
+@bot.tree.command(name="chatbot", description="Tag-only AI chat for this channel: NezukoHelper replies only when mentioned (admin)")
 @app_commands.describe(action="Choose On, Off, or Status — default is On")
 @app_commands.choices(action=[
     app_commands.Choice(name="On — reply only when NezukoHelper is tagged", value="on"),
     app_commands.Choice(name="Off — stop tag replies everywhere", value="off"),
     app_commands.Choice(name="Status — check whether tag chat is on", value="status"),
 ])
-async def chatbot_on_cmd(interaction: discord.Interaction, action: str = "on"):
+async def chatbot_cmd(interaction: discord.Interaction, action: str = "on"):
     global _tag_chatbot_master_on
     if interaction.channel is None:
         await interaction.response.send_message("❌ Channel not found.", ephemeral=True); return
@@ -924,22 +924,22 @@ async def chatbot_on_cmd(interaction: discord.Interaction, action: str = "on"):
             await interaction.response.send_message("🤖 Tag chat is already **ON** in this channel. Mention NezukoHelper with your question and she will reply.", ephemeral=True); return
         _tag_chatbot_master_on=True
         _tag_chatbot_channels.add(interaction.channel.id); _save_chatbot_channels()
-        log.info("chatbot_on: tag chat ON in channel %s by %s", interaction.channel.id, interaction.user)
-        await interaction.response.send_message("🤖 **Chatbot ON!** ✅\nFrom now on, NezukoHelper will reply in this channel **only when someone tags/mentions her** with a question.\nExample: `@NezukoHelper What is the capital of India?`\n\nUse `/chatbot_on` and choose **Off** to stop tag replies everywhere.")
+        log.info("chatbot: tag chat ON in channel %s by %s", interaction.channel.id, interaction.user)
+        await interaction.response.send_message("🤖 **Chatbot ON!** ✅\nFrom now on, NezukoHelper will reply in this channel **only when someone tags/mentions her** with a question.\nExample: `@NezukoHelper What is the capital of India?`\n\nUse `/chatbot` and choose **Off** to stop tag replies everywhere.")
     elif action == "off":
         if not _tag_chatbot_master_on and not _tag_chatbot_channels:
             await interaction.response.send_message("ℹ️ Chatbot is already OFF everywhere.", ephemeral=True); return
         _tag_chatbot_master_on=False
         _tag_chatbot_channels.clear(); _save_chatbot_channels()
-        log.info("chatbot_on: tag chat OFF everywhere by %s", interaction.user)
-        await interaction.response.send_message("🤖 **Chatbot OFF kar diya hai — har jagah.** ✅\nAb NezukoHelper kisi bhi channel me tag karne par reply nahi karegi. Wapas chalana ho to kisi channel me `/chatbot_on` chalakar **On** choose karna.", ephemeral=True)
+        log.info("chatbot: tag chat OFF everywhere by %s", interaction.user)
+        await interaction.response.send_message("🤖 **Chatbot OFF kar diya hai — har jagah.** ✅\nAb NezukoHelper kisi bhi channel me tag karne par reply nahi karegi. Wapas chalana ho to kisi channel me `/chatbot` chalakar **On** choose karna.", ephemeral=True)
     else:
         if _tag_chatbot_master_on and interaction.channel.id in _tag_chatbot_channels:
             await interaction.response.send_message("🤖 Tag chat is **ON** in this channel — NezukoHelper replies when she is tagged/mentioned.", ephemeral=True)
         elif _tag_chatbot_master_on and _tag_chatbot_channels:
             await interaction.response.send_message("🤖 Tag chat is ON in another channel, but **OFF in this channel**.", ephemeral=True)
         else:
-            await interaction.response.send_message("🤖 Chatbot is **OFF everywhere**. An admin can start it with `/chatbot_on`.", ephemeral=True)
+            await interaction.response.send_message("🤖 Chatbot is **OFF everywhere**. An admin can start it with `/chatbot`.", ephemeral=True)
 
 @bot.tree.command(name="noprefix", description="Owner only: grant, remove, or check No Prefix power (lasts 2 months)")
 @app_commands.describe(action="Add, remove, or check No Prefix power", member="Select the member")
