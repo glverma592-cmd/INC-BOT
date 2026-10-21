@@ -2094,6 +2094,17 @@ try:
     import yt_dlp as _yt_dlp
 except Exception:
     _yt_dlp=None
+def _ensure_ytdlp():
+    """yt-dlp baad me install ho to bot bina restart ke bhi utha lega."""
+    global _yt_dlp
+    if _yt_dlp is None:
+        try:
+            import yt_dlp as _m
+            _yt_dlp=_m
+            log.info("yt-dlp load ho gaya (version %s)", getattr(_m, "version", "?"))
+        except Exception:
+            log.warning("yt-dlp import fail\n%s", traceback.format_exc())
+    return _yt_dlp
 _YTDL_OPTS={"format": "bestaudio/best", "noplaylist": True, "quiet": True, "no_warnings": True, "default_search": "ytsearch1:"}
 _FFMPEG_OPTS={"before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5", "options": "-vn"}
 _music_state: dict[int, dict] = {}
@@ -2131,7 +2142,7 @@ async def _play_next(guild: discord.Guild):
         return
     if not st["queue"]:
         last=st.get("current")
-        if st.get("autoplay", True) and last and _yt_dlp is not None:
+        if st.get("autoplay", True) and last and _ensure_ytdlp() is not None:
             try:
                 sim=await asyncio.get_event_loop().run_in_executor(None, _yt_similar, last)
             except Exception:
@@ -2245,16 +2256,49 @@ class MusicPanelView(discord.ui.View):
         st["autoplay"]=not st.get("autoplay", True)
         await interaction.response.send_message(f"🔀 **Autoplay {'ON' if st['autoplay'] else 'OFF'}!** Gaana khatam ho to similar gaana {'khud chalega' if st['autoplay'] else 'nahi chala karega'}.", ephemeral=True)
 
+async def _song_autocomplete(interaction: discord.Interaction, current: str):
+    """Gaane ka naam type karte hi upar suggestions."""
+    q=(current or "").strip()
+    if len(q) < 2: return []
+    try:
+        url="https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=" + urllib.parse.quote(q)
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                if resp.status != 200: return []
+                data=json.loads(await resp.text())
+        return [app_commands.Choice(name=str(x)[:100], value=str(x)[:100]) for x in (data[1][:8] if len(data) > 1 else [])]
+    except Exception:
+        return []
+
+@bot.tree.command(name="join", description="Nezuko ko apne voice channel me bulao")
+async def join_cmd(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Join sirf server me hota hai.", ephemeral=True); return
+    voice=getattr(interaction.user, "voice", None)
+    if not voice or not voice.channel:
+        await interaction.response.send_message("❌ Pehle khud kisi **voice channel** me join Karo, fir `/join` Karo.", ephemeral=True); return
+    vc=interaction.guild.voice_client
+    try:
+        if vc is None:
+            vc=await voice.channel.connect()
+        elif vc.channel != voice.channel:
+            await vc.move_to(voice.channel)
+    except Exception:
+        log.error("join connect fail\n%s", traceback.format_exc())
+        await interaction.response.send_message("⚠️ Nezuko VC join nahi kar payi — uski `Connect/Speak` permission check Karo.", ephemeral=True); return
+    await interaction.response.send_message(f"🎵 **Nezuko {voice.channel.name} me aa gayi!** Ab `/p gaane ka naam` do, wahi gaana chalega. Panel se skip/stop/autoplay control hoga.")
+
 @bot.tree.command(name="play", description="Play a song in your voice channel (search or YouTube link)")
 @app_commands.describe(song="Gaane ka naam ya YouTube link")
+@app_commands.autocomplete(song=_song_autocomplete)
 async def play_cmd(interaction: discord.Interaction, song: str):
     if interaction.guild is None:
         await interaction.response.send_message("❌ Music sirf server me chalta hai.", ephemeral=True); return
     voice=getattr(interaction.user, "voice", None)
     if not voice or not voice.channel:
         await interaction.response.send_message("❌ Pehle kisi **voice channel** me join Karo, fir `/play` Karo.", ephemeral=True); return
-    if _yt_dlp is None:
-        await interaction.response.send_message("❌ Music ke liye `yt-dlp` missing hai — Termux me `pip install yt-dlp` karke bot restart Karo.", ephemeral=True); return
+    if _ensure_ytdlp() is None:
+        await interaction.response.send_message("❌ Music ke liye `yt-dlp` abhi bot ke andar load nahi ho raha. Termux me `python3 -m pip install -U yt-dlp` chalao, fir bot restart Karo.", ephemeral=True); return
     await interaction.response.defer()
     lag=await interaction.followup.send(f"🔎 **Nezuko gaana dhundh rahi hai...** 🎵 _{song}_")
     vc=interaction.guild.voice_client
@@ -2286,6 +2330,7 @@ async def play_cmd(interaction: discord.Interaction, song: str):
 
 @bot.tree.command(name="p", description="Shortcut of /play — play a song in your voice channel")
 @app_commands.describe(song="Gaane ka naam ya YouTube link")
+@app_commands.autocomplete(song=_song_autocomplete)
 async def p_cmd(interaction: discord.Interaction, song: str):
     await play_cmd.callback(interaction, song)
 
