@@ -208,7 +208,7 @@ async def ping(interaction: discord.Interaction):
 
 @bot.tree.command(name="help", description="Show all bot commands")
 async def help_cmd(interaction: discord.Interaction):
-    embed=discord.Embed(title="🤖 DIANA — Commands", color=0x9b59b6)
+    embed=discord.Embed(title="🤖 NezukoHelper — Commands", color=0x9b59b6)
     embed.add_field(name="🛡️ Admin / Moderation", value="`/kick` `/ban` `/unban` `/timeout` `/untimeout` `/warn` `/warnings` `/clearwarn` `/clear` `/slowmode` `/lock` `/unlock` `/role_add` `/role_remove` `/nickname`", inline=False)
     embed.add_field(name="📢 Announcement", value="`/say` `/announce` `/dm` `/report`", inline=False)
     embed.add_field(name="ℹ️ Jankari", value="`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo`", inline=False)
@@ -583,7 +583,7 @@ async def _ask_gemini(prompt: str, history=None) -> str:
         return "⚠️ AI is not configured yet — the `GEMINI_API_KEY` is missing."
     url=f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     payload={
-        "system_instruction": {"parts": [{"text": "You are DIANA, a Discord bot assistant. LANGUAGE RULE (highest priority): Always reply in clear English ONLY, no matter which language the user writes in (Hindi, Hinglish, Urdu, Spanish, or any other language). Even if the user asks you to reply in another language, still answer in English only. Understand the user's question in their language, but write your entire answer in English. Keep answers helpful, concise and under 1800 characters."}]},
+        "system_instruction": {"parts": [{"text": "You are NezukoHelper, a Discord bot assistant. LANGUAGE RULE (highest priority): Always reply in clear English ONLY, no matter which language the user writes in (Hindi, Hinglish, Urdu, Spanish, or any other language). Even if the user asks you to reply in another language, still answer in English only. Understand the user's question in their language, but write your entire answer in English. Keep answers helpful, concise and under 1800 characters."}]},
         "contents": (history or []) + [{"role": "user", "parts": [{"text": "[Reply in English only.] " + prompt[:4000]}]}],
     }
     try:
@@ -684,7 +684,7 @@ def _giveaway_embed(data: dict, ended: bool = False, winners: list[int] | None =
         embed.add_field(name="⏰ Ends In", value=f"<t:{ends_at}:R>\n<t:{ends_at}:F>", inline=True)
         embed.add_field(name="🎤 Hosted By", value=f"<@{data.get('host_id')}>", inline=True)
         embed.add_field(name="⌛ Duration", value=_format_duration(max(0, ends_at-int(datetime.datetime.now(datetime.timezone.utc).timestamp()))), inline=True)
-    embed.set_footer(text="DIANA Giveaways • Good luck everyone! 🍀")
+    embed.set_footer(text="NezukoHelper Giveaways • Good luck everyone! 🍀")
     if bot.user:
         try: embed.set_thumbnail(url=bot.user.display_avatar.url)
         except Exception: pass
@@ -1051,21 +1051,21 @@ def _parse_hex_color(raw: str):
     rgb=tuple(int(text[i:i+2], 16) for i in (0, 2, 4))
     return text, int(text, 16), rgb
 
-@bot.tree.command(name="invite", description="Get DIANA's invite link and this server's invite")
+@bot.tree.command(name="invite", description="Get NezukoHelper's invite link and this server's invite")
 async def invite_cmd(interaction: discord.Interaction):
     app_id=bot.application_id or (bot.user.id if bot.user else 0)
     bot_invite=f"https://discord.com/oauth2/authorize?client_id={app_id}&permissions=8&scope=bot%20applications.commands"
-    embed=discord.Embed(title="💌 Invite DIANA", description="Use the links below:", color=0x9b59b6)
-    embed.add_field(name="🤖 Add DIANA to a server", value=f"[Click here to invite DIANA]({bot_invite})", inline=False)
+    embed=discord.Embed(title="💌 Invite NezukoHelper", description="Use the links below:", color=0x9b59b6)
+    embed.add_field(name="🤖 Add NezukoHelper to a server", value=f"[Click here to invite NezukoHelper]({bot_invite})", inline=False)
     if interaction.guild and interaction.channel:
         try:
-            inv=await interaction.channel.create_invite(max_age=0, max_uses=0, reason="Invite requested from DIANA")
+            inv=await interaction.channel.create_invite(max_age=0, max_uses=0, reason="Invite requested from NezukoHelper")
             embed.add_field(name="🏠 This server's invite", value=inv.url, inline=False)
         except Exception:
             embed.add_field(name="🏠 This server's invite", value="I could not create a server invite in this channel.", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="support", description="Get help and support information for DIANA")
+@bot.tree.command(name="support", description="Get help and support information for NezukoHelper")
 async def support_cmd(interaction: discord.Interaction):
     owner_text="the bot owner"
     try:
@@ -1073,7 +1073,7 @@ async def support_cmd(interaction: discord.Interaction):
         owner_text=info.owner.mention
     except Exception:
         pass
-    embed=discord.Embed(title="🆘 DIANA Support", color=0x3498db)
+    embed=discord.Embed(title="🆘 NezukoHelper Support", color=0x3498db)
     embed.add_field(name="📋 Commands", value="Use `/help` to see every available command.", inline=False)
     embed.add_field(name="👑 Bot Owner", value=owner_text, inline=False)
     embed.add_field(name="🐞 Found a problem?", value="Use `/report` inside the server or contact the bot owner.", inline=False)
@@ -1124,7 +1124,7 @@ async def dice_cmd(interaction: discord.Interaction, sides: app_commands.Range[i
     extra=f"\n➕ Total: **{sum(results)}**" if rolls > 1 else ""
     await interaction.response.send_message(f"🎲 Dice result: {text}{extra}")
 
-@bot.tree.command(name="choose", description="Let DIANA choose one option for you")
+@bot.tree.command(name="choose", description="Let NezukoHelper choose one option for you")
 @app_commands.describe(options="Write options separated by commas, e.g. BGMI, Valorant, CODM")
 async def choose_cmd(interaction: discord.Interaction, options: str):
     choices=[o.strip() for o in options.split(",") if o.strip()]
@@ -1141,7 +1141,7 @@ async def eightball_cmd(interaction: discord.Interaction, question: str):
     embed.add_field(name="🔮 Answer", value=random.choice(answers), inline=False)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="rps", description="Play Rock Paper Scissors with DIANA")
+@bot.tree.command(name="rps", description="Play Rock Paper Scissors with NezukoHelper")
 @app_commands.describe(choice="Choose rock, paper, or scissors")
 @app_commands.choices(choice=[
     app_commands.Choice(name="🪨 Rock", value="rock"),
@@ -1157,8 +1157,8 @@ async def rps_cmd(interaction: discord.Interaction, choice: app_commands.Choice[
     elif (user_choice, bot_choice) in {("rock", "scissors"), ("scissors", "paper"), ("paper", "rock")}:
         result="🏆 You win!"
     else:
-        result="🤖 DIANA wins!"
-    await interaction.response.send_message(f"You chose **{icons[user_choice]}**\nDIANA chose **{icons[bot_choice]}**\n\n{result}")
+        result="🤖 NezukoHelper wins!"
+    await interaction.response.send_message(f"You chose **{icons[user_choice]}**\nNezukoHelper chose **{icons[bot_choice]}**\n\n{result}")
 
 @bot.tree.command(name="calc", description="Calculate a maths expression safely")
 @app_commands.describe(expression="Example: 25*4+10 or (50+10)/2")
@@ -1489,7 +1489,7 @@ def _eco_rec(guild_id: int, user_id: int) -> dict:
     guild_data=_economy.setdefault(str(guild_id), {})
     return guild_data.setdefault(str(user_id), {"coins": 0, "last_daily": 0})
 
-@bot.tree.command(name="balance", description="See your DIANA coin balance")
+@bot.tree.command(name="balance", description="See your NezukoHelper coin balance")
 @app_commands.describe(member="Whose balance? Leave blank for yourself")
 async def balance_cmd(interaction: discord.Interaction, member: discord.Member = None):
     if interaction.guild is None:
