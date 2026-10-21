@@ -12,3 +12,5 @@ bot/chatbot_channels.json
 bot/levels.json
 bot/tickets.json
 bot/reminders.json
+bot/economy.json
+bot/automod.json

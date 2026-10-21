@@ -72,6 +72,10 @@ async def setup_hook():
 @bot.event
 async def on_ready():
     log.info("logged in as %s (id=%s) — %s guilds", bot.user, bot.user.id, len(bot.guilds))
+    try:
+        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f"{len(bot.guilds)} servers | /help"))
+    except Exception:
+        pass
     log.info("verify=%s port=%s", REQUIRE_VERIFY, HTTP_PORT)
     # Purani guild-wise command copies saaf kar do — global 60 commands hi rahenge,
     # warna Discord har command 2 baar dikhata hai (ek global + ek server copy)
@@ -211,6 +215,8 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="🎉 Utility", value="`/poll` `/remind` `/help`", inline=False)
     embed.add_field(name="🎁 Giveaway", value="`/giveaway` — prize, time (jaise `30m`, `2h`, `1d`) aur winners set karke stylish giveaway start karo. Time khatam hote hi winner automatic announce hoga.", inline=False)
     embed.add_field(name="⭐ Levels • Tickets • Reminders", value="Chat karne par XP milega — `/rank` • `/leaderboard` • Support ke liye `/ticket`, band karne ko `/close` • `/reminders` • `/remind_cancel`", inline=False)
+    embed.add_field(name="🪙 Economy", value="`/balance` • `/daily` (roz free coins) • `/pay` • `/gamble`", inline=False)
+    embed.add_field(name="🛡️ AutoMod", value="`/antilink` — On karne par normal members ke link wale messages khud delete ho jayenge (mods exempt).", inline=False)
     embed.add_field(name="🎭 Auto-Role", value="`/autorole_bot_add` (naya member join kare to khud role milega) • `/autorole_bot_remove` • `/autorole_bot_status`", inline=False)
     embed.add_field(name="👑 No Prefix (Owner Only)", value="`/noprefix` — granted member can chat with the AI without `/ask` or a mention. Power lasts **2 months**.", inline=False)
     embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • `/chatbot_on` — isse chalu channel me DIANA sirf tab jawab degi jab use @tag karke kuch bola jaye", inline=False)
@@ -874,6 +880,8 @@ _memory: dict[tuple[int, int], list] = {}
 async def on_message(message: discord.Message):
     if message.author.bot: return
     await _process_afk_message(message)
+    if await _check_antilink(message):
+        return
     await _award_xp(message)
     is_mention = bool(bot.user and bot.user in message.mentions)
     is_tag_chatbot = _tag_chatbot_master_on and message.channel.id in _tag_chatbot_channels
@@ -1518,6 +1526,154 @@ async def close_cmd(interaction: discord.Interaction):
     try: await channel.edit(locked=True, archived=True, reason=f"Ticket closed by {interaction.user}")
     except Exception:
         log.error("ticket close fail\n%s", traceback.format_exc())
+
+# ---------------- ECONOMY SYSTEM ----------------
+_ECONOMY_FILE = Path(__file__).resolve().parent / "economy.json"
+def _load_economy() -> dict:
+    try:
+        data=json.loads(_ECONOMY_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+_economy: dict = _load_economy()
+def _save_economy():
+    try:
+        _ECONOMY_FILE.write_text(json.dumps(_economy), encoding="utf-8")
+    except Exception:
+        log.warning("economy save fail\n%s", traceback.format_exc())
+def _eco_rec(guild_id: int, user_id: int) -> dict:
+    guild_data=_economy.setdefault(str(guild_id), {})
+    return guild_data.setdefault(str(user_id), {"coins": 0, "last_daily": 0})
+
+@bot.tree.command(name="balance", description="See your DIANA coin balance")
+@app_commands.describe(member="Whose balance? Leave blank for yourself")
+async def balance_cmd(interaction: discord.Interaction, member: discord.Member = None):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Economy works only inside a server.", ephemeral=True); return
+    target=member or interaction.user
+    rec=_eco_rec(interaction.guild.id, target.id)
+    embed=discord.Embed(title="🪙 Coin Balance", color=0xf1c40f)
+    embed.set_thumbnail(url=target.display_avatar.url)
+    embed.add_field(name="Member", value=target.mention, inline=True)
+    embed.add_field(name="Coins", value=f"🪙 **{int(rec.get('coins', 0)):,}**", inline=True)
+    embed.set_footer(text="Earn more with /daily and /gamble — spend them carefully!")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="daily", description="Claim your free daily coins (every 24 hours)")
+async def daily_cmd(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Economy works only inside a server.", ephemeral=True); return
+    rec=_eco_rec(interaction.guild.id, interaction.user.id)
+    now=datetime.datetime.now(datetime.timezone.utc).timestamp()
+    last=float(rec.get("last_daily", 0))
+    remaining=86400 - (now - last)
+    if last and remaining > 0:
+        hours=int(remaining // 3600); minutes=int((remaining % 3600) // 60)
+        await interaction.response.send_message(f"⏳ You already claimed today's coins. Come back in **{hours}h {minutes}m**.", ephemeral=True); return
+    reward=random.randint(100, 250)
+    rec["coins"]=int(rec.get("coins", 0)) + reward
+    rec["last_daily"]=now
+    _save_economy()
+    await interaction.response.send_message(f"🎁 {interaction.user.mention} claimed **🪙 {reward} coins!**\n💰 New balance: **🪙 {int(rec['coins']):,}**")
+
+@bot.tree.command(name="pay", description="Send some of your coins to another member")
+@app_commands.describe(member="Who should receive the coins?", amount="How many coins? (minimum 1)")
+async def pay_cmd(interaction: discord.Interaction, member: discord.Member, amount: int):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Economy works only inside a server.", ephemeral=True); return
+    if amount < 1:
+        await interaction.response.send_message("❌ Please send at least 1 coin.", ephemeral=True); return
+    if member.id == interaction.user.id:
+        await interaction.response.send_message("❌ You cannot pay yourself.", ephemeral=True); return
+    if member.bot:
+        await interaction.response.send_message("❌ You cannot pay a bot account.", ephemeral=True); return
+    sender=_eco_rec(interaction.guild.id, interaction.user.id)
+    if int(sender.get("coins", 0)) < amount:
+        await interaction.response.send_message(f"❌ Not enough coins. Your balance is 🪙 **{int(sender.get('coins', 0)):,}**.", ephemeral=True); return
+    receiver=_eco_rec(interaction.guild.id, member.id)
+    sender["coins"]=int(sender.get("coins", 0)) - amount
+    receiver["coins"]=int(receiver.get("coins", 0)) + amount
+    _save_economy()
+    await interaction.response.send_message(f"💸 {interaction.user.mention} sent **🪙 {amount:,} coins** to {member.mention}!")
+
+@bot.tree.command(name="gamble", description="Bet coins on a 50/50 gamble — win double or lose it all")
+@app_commands.describe(amount="How many coins do you want to bet? (minimum 10)")
+async def gamble_cmd(interaction: discord.Interaction, amount: int):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Economy works only inside a server.", ephemeral=True); return
+    if amount < 10:
+        await interaction.response.send_message("❌ Minimum bet is 🪙 10 coins.", ephemeral=True); return
+    rec=_eco_rec(interaction.guild.id, interaction.user.id)
+    balance=int(rec.get("coins", 0))
+    if balance < amount:
+        await interaction.response.send_message(f"❌ Not enough coins. Your balance is 🪙 **{balance:,}**. Try `/daily` first!", ephemeral=True); return
+    if random.random() < 0.5:
+        rec["coins"]=balance + amount
+        _save_economy()
+        await interaction.response.send_message(f"🎰🍀 **YOU WIN, {interaction.user.mention}!**\nBet: 🪙 {amount:,} → Won: 🪙 **{amount:,}**\n💰 New balance: **🪙 {int(rec['coins']):,}**")
+    else:
+        rec["coins"]=balance - amount
+        _save_economy()
+        await interaction.response.send_message(f"🎰💔 **You lost, {interaction.user.mention}.**\nLost: 🪙 {amount:,}\n💰 New balance: **🪙 {int(rec['coins']):,}**\nBetter luck next time!")
+
+# ---------------- AUTOMOD: ANTI-LINK ----------------
+_AUTOMOD_FILE = Path(__file__).resolve().parent / "automod.json"
+def _load_automod() -> dict:
+    try:
+        data=json.loads(_AUTOMOD_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+_automod: dict = _load_automod()
+def _save_automod():
+    try:
+        _AUTOMOD_FILE.write_text(json.dumps(_automod), encoding="utf-8")
+    except Exception:
+        log.warning("automod save fail\n%s", traceback.format_exc())
+def _antilink_enabled(guild_id: int) -> bool:
+    return bool(_automod.get(str(guild_id), {}).get("antilink", False))
+_LINK_MARKERS=("http://", "https://", "www.", "discord.gg/", "discord.com/invite/", "t.me/", "bit.ly/", "tinyurl.com/")
+async def _check_antilink(message: discord.Message) -> bool:
+    """Anti-link ON ho to normal member ka link wala message delete kar do. Mods exempt."""
+    if message.guild is None: return False
+    if not _antilink_enabled(message.guild.id): return False
+    content=(message.content or "").lower()
+    if not any(marker in content for marker in _LINK_MARKERS): return False
+    perms=getattr(message.author, "guild_permissions", None)
+    if perms and (perms.administrator or perms.manage_messages or perms.manage_guild): return False
+    try:
+        await message.delete()
+    except Exception:
+        return False
+    try:
+        await message.channel.send(f"🛡️ {message.author.mention} Links are not allowed here — your message was removed by AutoMod.", delete_after=6)
+    except Exception:
+        pass
+    log.info("antilink: %s ka link message delete (guild %s)", message.author, message.guild.id)
+    return True
+
+@bot.tree.command(name="antilink", description="AutoMod: automatically delete links from normal members (admin)")
+@app_commands.describe(action="Choose On, Off, or Status — default is On")
+@app_commands.choices(action=[
+    app_commands.Choice(name="On — delete links automatically", value="on"),
+    app_commands.Choice(name="Off — allow links", value="off"),
+    app_commands.Choice(name="Status — check anti-link setting", value="status"),
+])
+async def antilink_cmd(interaction: discord.Interaction, action: str = "on"):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Anti-link works only inside a server.", ephemeral=True); return
+    if action in ("on", "off") and not _is_mod(interaction):
+        await _deny(interaction); return
+    gid=str(interaction.guild.id)
+    if action == "on":
+        _automod.setdefault(gid, {})["antilink"]=True; _save_automod()
+        await interaction.response.send_message("🛡️ **Anti-Link ON!** ✅\nAb normal members ke link wale messages khud delete ho jayenge. Admins/mods ke links delete nahi honge.", ephemeral=True)
+    elif action == "off":
+        _automod.setdefault(gid, {})["antilink"]=False; _save_automod()
+        await interaction.response.send_message("🛡️ Anti-Link **OFF** kar diya hai — ab links allowed hain.", ephemeral=True)
+    else:
+        state="ON ✅" if _antilink_enabled(interaction.guild.id) else "OFF"
+        await interaction.response.send_message(f"🛡️ Anti-Link is currently **{state}** in this server.", ephemeral=True)
 
 # ---- GitHub -> Discord ----
 async def github_handler(request: web.Request):
