@@ -216,7 +216,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="🎁 Giveaway", value="`/giveaway` — prize, time (jaise `30m`, `2h`, `1d`) aur winners set karke stylish giveaway start karo. Time khatam hote hi winner automatic announce hoga.", inline=False)
     embed.add_field(name="⭐ Levels • Tickets • Reminders", value="Chat karne par XP milega — `/rank` • `/leaderboard` • Support ke liye `/ticket`, band karne ko `/close` • `/reminders` • `/remind_cancel`", inline=False)
     embed.add_field(name="🪙 Economy", value="`/balance` • `/daily` (roz free coins) • `/pay` • `/gamble`", inline=False)
-    embed.add_field(name="🛡️ AutoMod", value="`/antilink` — On karne par normal members ke link wale messages khud delete ho jayenge (mods exempt).", inline=False)
+    embed.add_field(name="🛡️ AutoMod", value="`/antilink` • `/antispam` — On karne par normal members ke link/spam messages khud delete ho jayenge (mods exempt).", inline=False)
     embed.add_field(name="🎭 Auto-Role", value="`/autorole_bot_add` (naya member join kare to khud role milega) • `/autorole_bot_remove` • `/autorole_bot_status`", inline=False)
     embed.add_field(name="👑 No Prefix (Owner Only)", value="`/noprefix` — granted member can chat with the AI without `/ask` or a mention. Power lasts **2 months**.", inline=False)
     embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • `/chatbot_on` — isse chalu channel me NezukoHelper sirf tab jawab degi jab use @tag karke kuch bola jaye", inline=False)
@@ -881,6 +881,8 @@ async def on_message(message: discord.Message):
     if message.author.bot: return
     await _process_afk_message(message)
     if await _check_antilink(message):
+        return
+    if await _check_antispam(message):
         return
     await _award_xp(message)
     is_mention = bool(bot.user and bot.user in message.mentions)
@@ -1632,6 +1634,8 @@ def _save_automod():
         log.warning("automod save fail\n%s", traceback.format_exc())
 def _antilink_enabled(guild_id: int) -> bool:
     return bool(_automod.get(str(guild_id), {}).get("antilink", False))
+def _antispam_enabled(guild_id: int) -> bool:
+    return bool(_automod.get(str(guild_id), {}).get("antispam", False))
 _LINK_MARKERS=("http://", "https://", "www.", "discord.gg/", "discord.com/invite/", "t.me/", "bit.ly/", "tinyurl.com/")
 async def _check_antilink(message: discord.Message) -> bool:
     """Anti-link ON ho to normal member ka link wala message delete kar do. Mods exempt."""
@@ -1650,6 +1654,39 @@ async def _check_antilink(message: discord.Message) -> bool:
     except Exception:
         pass
     log.info("antilink: %s ka link message delete (guild %s)", message.author, message.guild.id)
+    return True
+
+# ---------------- AUTOMOD: ANTI-SPAM ----------------
+_spam_tracker: dict[tuple[int, int], list] = {}
+_spam_warned: dict[tuple[int, int], float] = {}
+async def _check_antispam(message: discord.Message) -> bool:
+    """Anti-spam ON ho to flood/repeat spam delete Karo. Mods exempt.
+    Trigger: 5 second me 5 messages, ya 20 second me ek hi message 3 baar."""
+    if message.guild is None: return False
+    if not _antispam_enabled(message.guild.id): return False
+    perms=getattr(message.author, "guild_permissions", None)
+    if perms and (perms.administrator or perms.manage_messages or perms.manage_guild): return False
+    now=time.time()
+    key=(message.guild.id, message.author.id)
+    hist=_spam_tracker.setdefault(key, [])
+    hist[:] = [(ts, txt) for ts, txt in hist if now - ts <= 20]
+    norm=(message.content or "").strip().lower()
+    hist.append((now, norm))
+    flood=sum(1 for ts, _ in hist if now - ts <= 5) >= 5
+    repeat=bool(norm) and sum(1 for _, txt in hist if txt == norm) >= 3
+    if not (flood or repeat): return False
+    hist.clear()
+    try:
+        await message.delete()
+    except Exception:
+        return False
+    if now - _spam_warned.get(key, 0) >= 15:
+        _spam_warned[key]=now
+        try:
+            await message.channel.send(f"🛡️ {message.author.mention} Please don't spam — your message was removed by AutoMod.", delete_after=8)
+        except Exception:
+            pass
+    log.info("antispam: %s ka spam message delete (guild %s)", message.author, message.guild.id)
     return True
 
 @bot.tree.command(name="antilink", description="AutoMod: automatically delete links from normal members (admin)")
@@ -1674,6 +1711,29 @@ async def antilink_cmd(interaction: discord.Interaction, action: str = "on"):
     else:
         state="ON ✅" if _antilink_enabled(interaction.guild.id) else "OFF"
         await interaction.response.send_message(f"🛡️ Anti-Link is currently **{state}** in this server.", ephemeral=True)
+
+@bot.tree.command(name="antispam", description="AutoMod: automatically delete spam/flood messages (admin)")
+@app_commands.describe(action="Choose On, Off, or Status — default is On")
+@app_commands.choices(action=[
+    app_commands.Choice(name="On — delete spam automatically", value="on"),
+    app_commands.Choice(name="Off — allow spam", value="off"),
+    app_commands.Choice(name="Status — check anti-spam setting", value="status"),
+])
+async def antispam_cmd(interaction: discord.Interaction, action: str = "on"):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Anti-spam works only inside a server.", ephemeral=True); return
+    if action in ("on", "off") and not _is_mod(interaction):
+        await _deny(interaction); return
+    gid=str(interaction.guild.id)
+    if action == "on":
+        _automod.setdefault(gid, {})["antispam"]=True; _save_automod()
+        await interaction.response.send_message("🛡️ **Anti-Spam ON!** ✅\nAb flood (5 sec me 5 messages) ya ek hi message baar-baar bhejne par spam khud delete ho jayega. Admins/mods exempt hain.", ephemeral=True)
+    elif action == "off":
+        _automod.setdefault(gid, {})["antispam"]=False; _save_automod()
+        await interaction.response.send_message("🛡️ Anti-Spam **OFF** kar diya hai.", ephemeral=True)
+    else:
+        state="ON ✅" if _antispam_enabled(interaction.guild.id) else "OFF"
+        await interaction.response.send_message(f"🛡️ Anti-Spam is currently **{state}** in this server.", ephemeral=True)
 
 # ---- GitHub -> Discord ----
 async def github_handler(request: web.Request):
