@@ -248,6 +248,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="👑 No Prefix (Owner Only)", value="`/noprefix` — granted member can chat with the AI without `/ask` or a mention. Power lasts **2 months**.", inline=False)
     embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • `/chatbot` • `/summarize` — sawal pucho, tag-chat chalu Karo, ya lambi chat ka short summary banao", inline=False)
     embed.add_field(name="🎨 AI Image", value="`/image kya banana hai` — bas ye ek hi image wala command hai", inline=False)
+    embed.add_field(name="🎵 Music", value="`/play gaana` • `/skip` • `/stop` • `/pause` • `/resume` • `/queue` • `/nowplaying` — VC join karke gaane ka naam ya YouTube link do", inline=False)
     embed.add_field(name="✨ More Utility & Fun", value="`/invite` `/support` `/rules` `/suggest` `/coinflip` `/dice` `/choose` `/eightball` `/rps` `/calc` `/password` `/qr` `/color` `/emojiinfo` `/channelinfo` `/roles` `/banner` `/afk` `/snipe` `/timer`", inline=False)
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -2086,6 +2087,162 @@ async def on_member_ban(guild: discord.Guild, user: discord.User):
 @bot.event
 async def on_member_unban(guild: discord.Guild, user: discord.User):
     await _modlog(guild, f"♻️ **Unban:** {user} ({user.id}) ka ban hata diya gaya.")
+
+# ---------------- MUSIC SYSTEM ----------------
+try:
+    import yt_dlp as _yt_dlp
+except Exception:
+    _yt_dlp=None
+_YTDL_OPTS={"format": "bestaudio/best", "noplaylist": True, "quiet": True, "no_warnings": True, "default_search": "ytsearch1:"}
+_FFMPEG_OPTS={"before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5", "options": "-vn"}
+_music_state: dict[int, dict] = {}
+def _music_of(guild_id: int) -> dict:
+    return _music_state.setdefault(guild_id, {"queue": [], "current": None, "text_channel": None})
+def _yt_extract(query: str) -> dict:
+    with _yt_dlp.YoutubeDL(_YTDL_OPTS) as ydl:
+        info=ydl.extract_info(query, download=False)
+        if "entries" in info:
+            entries=[e for e in info["entries"] if e]
+            if not entries: raise RuntimeError("no result")
+            info=entries[0]
+        return {"title": info.get("title", "Unknown song"), "url": info.get("url"), "webpage": info.get("webpage_url", ""), "duration": info.get("duration") or 0}
+async def _play_next(guild: discord.Guild):
+    st=_music_of(guild.id)
+    vc=guild.voice_client
+    if vc is None: return
+    if not st["queue"]:
+        st["current"]=None
+        return
+    track=st["queue"].pop(0)
+    st["current"]=track
+    try:
+        source=discord.FFmpegPCMAudio(track["url"], **_FFMPEG_OPTS)
+    except Exception:
+        log.error("music ffmpeg fail\n%s", traceback.format_exc())
+        ch=st.get("text_channel")
+        if ch is not None:
+            try: await ch.send("⚠️ Gaana nahi chal paya — Termux me `pkg install ffmpeg` karke bot restart Karo.")
+            except Exception: pass
+        st["current"]=None
+        return
+    def _after(error):
+        if error: log.warning("music playback error: %s", error)
+        asyncio.run_coroutine_threadsafe(_play_next(guild), bot.loop)
+    try:
+        vc.play(source, after=_after)
+    except Exception:
+        log.error("music play fail\n%s", traceback.format_exc())
+        st["current"]=None
+        return
+    ch=st.get("text_channel")
+    if ch is not None:
+        try: await ch.send(f"🎵 **Now Playing:** {track['title']}\n_(Requested by {track['requester']})_")
+        except Exception: pass
+
+@bot.tree.command(name="play", description="Play a song in your voice channel (search or YouTube link)")
+@app_commands.describe(song="Gaane ka naam ya YouTube link")
+async def play_cmd(interaction: discord.Interaction, song: str):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Music sirf server me chalta hai.", ephemeral=True); return
+    voice=getattr(interaction.user, "voice", None)
+    if not voice or not voice.channel:
+        await interaction.response.send_message("❌ Pehle kisi **voice channel** me join Karo, fir `/play` Karo.", ephemeral=True); return
+    if _yt_dlp is None:
+        await interaction.response.send_message("❌ Music ke liye `yt-dlp` missing hai — Termux me `pip install yt-dlp` karke bot restart Karo.", ephemeral=True); return
+    await interaction.response.defer()
+    lag=await interaction.followup.send(f"🔎 **Nezuko gaana dhundh rahi hai...** 🎵 _{song}_")
+    vc=interaction.guild.voice_client
+    try:
+        if vc is None:
+            vc=await voice.channel.connect()
+        elif vc.channel != voice.channel:
+            await vc.move_to(voice.channel)
+    except Exception:
+        log.error("music connect fail\n%s", traceback.format_exc())
+        await lag.edit(content="⚠️ Voice channel join nahi kar payi — meri `Connect/Speak` permission check Karo."); return
+    loop=asyncio.get_event_loop()
+    try:
+        track=await loop.run_in_executor(None, _yt_extract, song)
+    except Exception:
+        log.error("music search fail\n%s", traceback.format_exc())
+        await lag.edit(content="⚠️ Ye gaana nahi mila — naam sahi likh ke fir try Karo."); return
+    track["requester"]=interaction.user.display_name
+    st=_music_of(interaction.guild.id)
+    st["text_channel"]=interaction.channel
+    if vc.is_playing() or vc.is_paused():
+        st["queue"].append(track)
+        await lag.edit(content=f"➕ **Queue me add ho gaya (#{len(st['queue'])}):** {track['title']} 🎵")
+    else:
+        st["queue"].append(track)
+        await lag.edit(content=f"🎵 **Mil gaya:** {track['title']} — baj raha hai...")
+        await _play_next(interaction.guild)
+
+@bot.tree.command(name="skip", description="Skip the current song")
+async def skip_cmd(interaction: discord.Interaction):
+    vc=interaction.guild.voice_client if interaction.guild else None
+    if vc and (vc.is_playing() or vc.is_paused()):
+        vc.stop()
+        await interaction.response.send_message("⏭️ **Skipped!** Agla gaana aa raha hai...")
+    else:
+        await interaction.response.send_message("ℹ️ Abhi kuch baj hi nahi raha.", ephemeral=True)
+
+@bot.tree.command(name="stop", description="Stop music, clear queue and leave voice channel")
+async def stop_cmd(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    st=_music_of(interaction.guild.id)
+    st["queue"].clear(); st["current"]=None
+    vc=interaction.guild.voice_client
+    if vc:
+        try: vc.stop()
+        except Exception: pass
+        await vc.disconnect()
+    await interaction.response.send_message("⏹️ **Music band!** Queue saaf kar di aur Nezuko VC se bahar aa gayi.")
+
+@bot.tree.command(name="pause", description="Pause the current song")
+async def pause_cmd(interaction: discord.Interaction):
+    vc=interaction.guild.voice_client if interaction.guild else None
+    if vc and vc.is_playing():
+        vc.pause()
+        await interaction.response.send_message("⏸️ **Paused.** `/resume` se wapas chalega.")
+    else:
+        await interaction.response.send_message("ℹ️ Abhi kuch baj nahi raha jo pause Karu.", ephemeral=True)
+
+@bot.tree.command(name="resume", description="Resume the paused song")
+async def resume_cmd(interaction: discord.Interaction):
+    vc=interaction.guild.voice_client if interaction.guild else None
+    if vc and vc.is_paused():
+        vc.resume()
+        await interaction.response.send_message("▶️ **Resumed!**")
+    else:
+        await interaction.response.send_message("ℹ️ Koi gaana paused nahi hai.", ephemeral=True)
+
+@bot.tree.command(name="queue", description="See the music queue")
+async def queue_cmd(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    st=_music_of(interaction.guild.id)
+    cur=st.get("current")
+    if not cur and not st["queue"]:
+        await interaction.response.send_message("🎵 Queue khaali hai — `/play` se gaana lagao.", ephemeral=True); return
+    lines=[]
+    if cur: lines.append(f"▶️ **Now Playing:** {cur['title']}")
+    for i, t in enumerate(st["queue"][:10], 1):
+        lines.append(f"{i}. {t['title']}")
+    if len(st["queue"]) > 10: lines.append(f"...aur {len(st['queue'])-10} gaane")
+    await interaction.response.send_message("🎵 **Music Queue:**\n" + "\n".join(lines))
+
+@bot.tree.command(name="nowplaying", description="See what song is playing right now")
+async def nowplaying_cmd(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    cur=_music_of(interaction.guild.id).get("current")
+    if cur:
+        dur=int(cur.get("duration") or 0)
+        mmss=f" ({dur//60}:{dur%60:02d})" if dur else ""
+        await interaction.response.send_message(f"🎵 **Now Playing:** {cur['title']}{mmss}\n_(Requested by {cur['requester']})_")
+    else:
+        await interaction.response.send_message("ℹ️ Abhi kuch nahi baj raha — `/play` se lagao.", ephemeral=True)
 
 # ---- GitHub -> Discord ----
 async def github_handler(request: web.Request):
