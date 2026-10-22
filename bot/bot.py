@@ -9,6 +9,10 @@ import aiohttp, discord
 from aiohttp import web
 from discord import app_commands
 from discord.ext import commands
+try:
+    from discord.ext import voice_recv as _voice_recv
+except Exception:
+    _voice_recv=None
 
 def _load_dotenv(path=None):
     # cwd/.env, bot/.env, repo-root/.env teeno jagah dhundho (hosting ke liye)
@@ -2491,23 +2495,32 @@ async def _speak_in_vc(guild, text: str) -> bool:
         log.warning("speak_in_vc fail\n%s", traceback.format_exc())
         return False
 
-class _WakeSink:
-    """VC ki awaaz sunne wala sink — per-user boli jama Karo, chup hone par kaat ke process karo.
-    discord.sinks.Sink ki tarah kaam karta hai (py-cord/discord.py dono)."""
+class _WakeSink(_voice_recv.AudioSink if _voice_recv is not None else object):
+    """VC ki awaaz sunne wala sink (discord-ext-voice-recv) — per-user boli jama Karo,
+    chup hone par kaat ke process karo."""
     def __init__(self, guild):
         self.guild=guild
         self.buffers: dict[int, bytearray] = {}
         self.last_seen: dict[int, float] = {}
         self.started=time.time()
-    def write(self, data, user):
+    def wants_opus(self) -> bool:
+        return False
+    def write(self, data):
         try:
+            if _voice_recv is not None and hasattr(data, "source"):
+                user=data.source
+                pcm=getattr(data, "pcm", None) or getattr(data, "opus", b"")
+            else:
+                return
             uid=getattr(user, "id", None) if not isinstance(user, int) else user
-            if uid is None or uid == bot.user.id: return
+            if uid is None or (bot.user and uid == bot.user.id): return
+            if not pcm: return
             buf=self.buffers.setdefault(uid, bytearray())
-            buf.extend(data.data if hasattr(data, "data") else data)
+            buf.extend(pcm)
             self.last_seen[uid]=time.time()
             if len(buf) > 48000 * 2 * 2 * 20:  # 20 sec se zyada ek saath na rakhe
                 del buf[:-48000 * 2 * 2 * 10]
+            return
         except Exception:
             pass
     def cleanup(self):
@@ -2537,10 +2550,14 @@ def _start_listening(guild, channel_id: int):
     _VOICE_LISTEN[guild.id]=True
     _VOICE_LISTEN_CH[guild.id]=channel_id
     sink=_WakeSink(guild)
+    if _voice_recv is None: return False, "no_voice_recv_lib"
     try:
-        vc.start_recording(sink, _vc_recording_done, guild)
+        if not _voice_recv.VoiceRecvClient in type(vc).__mro__: raise RuntimeError("VC sunne wala client nahi hai — /join fir se Karo")
+        if vc.is_listening(): vc.stop_listening()
+        vc.listen(sink)
+        log.info("voice listening chalu guild %s", guild.id)
     except Exception:
-        log.warning("start_recording fail\n%s", traceback.format_exc())
+        log.warning("listen fail\n%s", traceback.format_exc())
         _VOICE_LISTEN[guild.id]=False
         return False, "recording_fail"
     t=_vc_tasks.get(guild.id)
@@ -2552,7 +2569,7 @@ def _stop_listening(guild):
     _VOICE_LISTEN[guild.id]=False
     try:
         if guild.voice_client is not None:
-            guild.voice_client.stop_recording()
+            guild.voice_client.stop_listening()
     except Exception: pass
     t=_vc_tasks.pop(guild.id, None)
     if t: t.cancel()
@@ -2678,7 +2695,8 @@ async def join_cmd(interaction: discord.Interaction):
     vc=interaction.guild.voice_client
     try:
         if vc is None:
-            vc=await voice.channel.connect()
+            _vcls=_voice_recv.VoiceRecvClient if _voice_recv is not None else discord.VoiceClient
+            vc=await voice.channel.connect(cls=_vcls)
         elif vc.channel != voice.channel:
             await vc.move_to(voice.channel)
     except Exception as e:
@@ -2708,7 +2726,8 @@ async def play_cmd(interaction: discord.Interaction, song: str):
     vc=interaction.guild.voice_client
     try:
         if vc is None:
-            vc=await voice.channel.connect()
+            _vcls=_voice_recv.VoiceRecvClient if _voice_recv is not None else discord.VoiceClient
+            vc=await voice.channel.connect(cls=_vcls)
         elif vc.channel != voice.channel:
             await vc.move_to(voice.channel)
     except Exception as e:

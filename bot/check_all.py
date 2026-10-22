@@ -37,11 +37,11 @@ def _cmd(name):
         return line[:60] + (" OK" if p.returncode == 0 else "")
     return f
 def _rec():
-    import discord
-    has_rec = hasattr(discord.VoiceClient, "start_recording")
-    if has_rec:
-        return "OK (recording method hai)"
-    raise RuntimeError("start_recording nahi (discord.py " + discord.__version__ + ")")
+    try:
+        from discord.ext import voice_recv
+        return "OK (voice_recv hai)"
+    except Exception as e:
+        raise RuntimeError("voice_recv missing — pip install discord-ext-voice-recv Karo")
 
 import importlib
 print("=== Nezuko CHECK ALL ===")
@@ -56,8 +56,8 @@ print("[2] System tools:")
 check("ffmpeg", _cmd("ffmpeg"))
 print("[3] Voice bolna (opus):")
 check("opus", _opus_w)
-print("[4] VC me sunna (recording):")
-check("start_recording (py-cord)", _rec)
+print("[4] VC me sunna (voice_recv):")
+check("voice_recv sunna", _rec)
 print("[5] Bot code (bot.py syntax + imports):")
 try:
     src = open("bot/bot.py" if __import__('os').path.exists("bot/bot.py") else "bot.py", encoding="utf-8").read()
