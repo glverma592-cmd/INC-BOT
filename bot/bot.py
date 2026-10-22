@@ -1028,14 +1028,40 @@ async def ask_cmd(interaction: discord.Interaction, sawal: str):
         await interaction.followup.send(f"**{interaction.user.display_name}:** {sawal}\n\n{jawab}")
 
 # ---------------- VOICE CHAT (VC me Nezuko tumse baat karegi) ----------------
+def _pick_edge_voice(text: str) -> str:
+    """Jawab ki bhasha/script pehchan ke usi bhasha ki ladki-awaaz chuno —
+    Nezuko duniya ki lagbhag har bhasha me bolegi."""
+    for ch in text:
+        o=ord(ch)
+        if 0x0900 <= o <= 0x097F: return "hi-IN-SwaraNeural"      # Hindi/Devanagari
+        if 0x0980 <= o <= 0x09FF: return "bn-IN-TanishaaNeural"   # Bengali
+        if 0x0A00 <= o <= 0x0A7F: return "pa-IN-Default"           # Punjabi (Gurmukhi)
+        if 0x0A80 <= o <= 0x0AFF: return "gu-IN-DhwaniNeural"     # Gujarati
+        if 0x0B80 <= o <= 0x0BFF: return "ta-IN-PallaviNeural"    # Tamil
+        if 0x0C00 <= o <= 0x0C7F: return "te-IN-ShrutiNeural"     # Telugu
+        if 0x0C80 <= o <= 0x0CFF: return "kn-IN-SapnaNeural"      # Kannada
+        if 0x0D00 <= o <= 0x0D7F: return "ml-IN-SobhanaNeural"    # Malayalam
+        if 0x0600 <= o <= 0x06FF: return "ur-IN-GulNeural"        # Urdu/Arabic script
+        if 0x3040 <= o <= 0x30FF: return "ja-JP-NanamiNeural"     # Japanese
+        if 0xAC00 <= o <= 0xD7AF: return "ko-KR-SunHiNeural"      # Korean
+        if 0x4E00 <= o <= 0x9FFF: return "zh-CN-XiaoxiaoNeural"  # Chinese
+        if 0x0400 <= o <= 0x04FF: return "ru-RU-SvetlanaNeural"   # Russian/Cyrillic
+        if 0x0E00 <= o <= 0x0E7F: return "th-TH-PremwadeeNeural" # Thai
+    return "en-IN-NeerjaNeural"
+
 async def _tts_bytes(text: str) -> bytes | None:
-    """Nezuko ki soft girl voice me text ko speech banao — BINA gemini ke.
-    edge-tts (free) ki awaaz hi use hogi, koi key nahi chahiye."""
-    saaf=re.sub(r"[*_`~#>\[\]()]", "", text or "").strip()
+    """Nezuko ki soft girl voice me text ko speech banao.
+    edge-tts (free) bolti hai — jawab jis bhi bhasha me ho, usi ki awaaz."""
+    saaf=re.sub(r"[*_`~#>\[\]()@]", "", text or "").strip()
     saaf=re.sub(r"https?://\S+", "", saaf).strip()
     if not saaf: return None
     saaf=saaf[:600]
-    for awaaz in ("en-IN-NeerjaNeural", "hi-IN-SwaraNeural", "en-US-AnaNeural"):
+    awaazen=[]
+    for a in (_pick_edge_voice(saaf), "en-IN-NeerjaNeural", "hi-IN-SwaraNeural", "en-US-AnaNeural"):
+        if a not in awaazen: awaazen.append(a)
+    for awaaz in awaazen:
+        if awaaz.endswith("Default"):
+            continue  # pa-IN me ladki awaaz nahi — neeche wali chalegi
         try:
             import io as _io
             bio=_io.BytesIO()
@@ -2515,8 +2541,9 @@ async def _stt_gemini_once(wav_bytes: bytes) -> str:
     """Gemini se awaaz ko ek tez try me samjho (race ke liye)."""
     if not GEMINI_API_KEY: return ""
     import base64 as _b64
-    prompt=("Listen to this audio and transcribe EXACTLY what the person said "
-            "(Hindi/Hinglish/English jaise bola hai waise hi, same script me). Return ONLY the transcript text.")
+    prompt=("Listen to this audio and transcribe EXACTLY what the person said, in whatever language they speak "
+            "(Hindi, English, Bengali, Tamil, Japanese, Spanish — ANY language), in that same language and script. "
+            "Return ONLY the transcript text.")
     payload={"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/wav", "data": _b64.b64encode(wav_bytes).decode()}}]}]}
     try:
         url="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
@@ -2584,7 +2611,11 @@ def _stt_google_free(wav_bytes: bytes) -> str:
     with _sr.AudioFile(_io.BytesIO(bio.getvalue())) as source:
         audio=rec.record(source)
     pehli=""
-    for lang in ("hi-IN", "en-IN", "en-US"):
+    for lang in ("hi-IN", "en-IN", "en-US", "mr-IN", "bn-IN", "ta-IN", "te-IN",
+                 "kn-IN", "ml-IN", "gu-IN", "pa-IN", "ur-IN", "es-ES", "fr-FR",
+                 "de-DE", "pt-BR", "it-IT", "nl-NL", "ru-RU", "ja-JP", "ko-KR",
+                 "zh-CN", "ar-EG", "tr-TR", "id-ID", "vi-VN", "th-TH", "ne-NP",
+                 "si-LK", "fil-PH", "sw-KE", "uk-UA", "pl-PL", "fa-IR", "my-MM"):
         try:
             t=rec.recognize_google(audio, language=lang)
         except Exception:
