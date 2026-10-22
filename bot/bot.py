@@ -2404,25 +2404,70 @@ def _pcm_to_wav(pcm: bytes) -> bytes:
     return bio.getvalue()
 
 async def _stt_gemini(wav_bytes: bytes) -> str:
-    """User ki boli hui baat ko text me badlo (Gemini audio) — wake word check ke liye."""
+    """User ki boli hui baat ko text me badlo — wake word check ke liye.
+    Pehle Gemini ke awaaz samajhne wale pakke models, chal jaye to wahi.
+    Saath me asal error body bhi log karo taaki pata chale manaa kyun kiya."""
     if not GEMINI_API_KEY: return ""
     import base64 as _b64
-    payload={"contents": [{"parts": [{"text": "Transcribe EXACTLY what the user said in this audio. Return ONLY the transcript text, no extra words."}, {"inline_data": {"mime_type": "audio/wav", "data": _b64.b64encode(wav_bytes).decode()}}]}]}
-    for model in [GEMINI_MODEL, "gemini-3-flash-preview", "gemini-flash-lite-latest"]:
+    prompt=("Listen to this audio and transcribe EXACTLY what the person said "
+            "(Hindi/Hinglish/English jaise bola hai waise hi). Return ONLY the transcript text.")
+    payload={"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/wav", "data": _b64.b64encode(wav_bytes).decode()}}]}]}
+    for model in ["gemini-2.0-flash", "gemini-2.5-flash", GEMINI_MODEL, "gemini-3-flash-preview", "gemini-flash-latest"]:
+        if not model: continue
         try:
             url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=35)) as resp:
+                    txt=await resp.text()
                     if resp.status == 200:
-                        data=await resp.json()
                         try:
+                            data=json.loads(txt)
                             t=(data["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
                             if t: return t
                         except Exception: pass
                     else:
-                        log.warning("STT HTTP %s model %s", resp.status, model)
+                        log.warning("STT HTTP %s model %s body: %s", resp.status, model, txt[:300])
+                        if resp.status in (400, 401, 403) and ("API key" in txt or "API_KEY" in txt):
+                            break
         except Exception:
             log.warning("STT fail %s\n%s", model, traceback.format_exc())
+    # Last try: Google ki free awaaz-pehchan (bina key) — file 16k mono bana ke
+    try:
+        return await asyncio.get_event_loop().run_in_executor(None, _stt_google_free, wav_bytes)
+    except Exception:
+        log.warning("STT google free fail\n%s", traceback.format_exc())
+    return ""
+
+def _stt_google_free(wav_bytes: bytes) -> str:
+    """Fallback: SpeechRecognition + Google free STT (16kHz mono chahiye)."""
+    import io as _io, wave as _wv
+    src=_wv.open(_io.BytesIO(wav_bytes), "rb")
+    nch, wid, rate, nfr = src.getnchannels(), src.getsampwidth(), src.getframerate(), src.getnframes()
+    raw=src.readframes(nfr)
+    if wid != 2: return ""
+    import struct as _st
+    vals=_st.unpack("<%dh" % (len(raw)//2), raw)
+    if nch == 2:
+        vals=vals[0::2]  # left channel hi kaafi hai
+    if rate != 16000:
+        step=rate/16000.0; out=[]; i=0.0
+        while int(i) < len(vals):
+            out.append(vals[int(i)]); i+=step
+        vals=out
+    mono=_st.pack("<%dh" % len(vals), *vals)
+    bio=_io.BytesIO()
+    with _wv.open(bio, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(mono)
+    import speech_recognition as _sr
+    rec=_sr.Recognizer()
+    with _sr.AudioFile(_io.BytesIO(bio.getvalue())) as source:
+        audio=rec.record(source)
+    for lang in ("hi-IN", "en-IN", "en-US"):
+        try:
+            t=rec.recognize_google(audio, language=lang)
+            if t: return t
+        except Exception:
+            continue
     return ""
 
 _WAKE_WORDS=("nezuko", "Nezuko", "nezuku", "nezko", "nuzuko", "ne juko", "ne zuko")
