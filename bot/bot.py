@@ -3502,6 +3502,9 @@ async def _play_next(guild: discord.Guild):
 # ------------- MIC LISTEN: Nezuko naam sunke VC me bolkar jawab -------------
 _VOICE_LISTEN: dict[int, bool] = {}
 _VOICE_LISTEN_CH: dict[int, int] = {}
+_VC_VOICE_CH: dict[int, int] = {}
+_VC_REJOIN: dict[int, object] = {}
+_VC_REJOIN_TRIES: dict[int, list] = {}
 _vc_tasks: dict[int, asyncio.Task] = {}
 _VC_COOLDOWN: dict[int, float] = {}
 _VC_PROCESSING: set = set()
@@ -3920,6 +3923,9 @@ def _start_listening(guild, channel_id: int):
         if not _voice_recv.VoiceRecvClient in type(vc).__mro__: raise RuntimeError("VC sunne wala client nahi hai — /join fir se Karo")
         if vc.is_listening(): vc.stop_listening()
         vc.listen(sink)
+        try:
+            if vc.channel is not None: _VC_VOICE_CH[guild.id]=vc.channel.id
+        except Exception: pass
         log.info("voice listening chalu guild %s", guild.id)
     except Exception:
         log.warning("listen fail\n%s", traceback.format_exc())
@@ -3932,12 +3938,92 @@ def _start_listening(guild, channel_id: int):
 
 def _stop_listening(guild):
     _VOICE_LISTEN[guild.id]=False
+    _VC_VOICE_CH.pop(guild.id, None)
     try:
         if guild.voice_client is not None:
             guild.voice_client.stop_listening()
     except Exception: pass
     t=_vc_tasks.pop(guild.id, None)
     if t: t.cancel()
+
+async def _join_voice(channel):
+    """VC join — handshake fail ho to saaf karke 3 baar tak dobara koshish.
+    Phone-net par pehla handshake aksar tootta hai, ek retry me jud jata hai."""
+    guild=channel.guild
+    vc=guild.voice_client
+    if vc is not None and vc.is_connected():
+        if vc.channel == channel: return vc
+        try:
+            await vc.move_to(channel); return vc
+        except Exception:
+            log.warning("voice move fail, dobara connect hoga\n%s", traceback.format_exc())
+            try: await vc.disconnect(force=True)
+            except Exception: pass
+    last=None
+    for koshish in range(1, 4):
+        try:
+            vc=guild.voice_client
+            if vc is not None and not vc.is_connected():
+                try: await vc.disconnect(force=True)
+                except Exception: pass
+            _vcls=_voice_recv.VoiceRecvClient if _voice_recv is not None else discord.VoiceClient
+            vc=await channel.connect(cls=_vcls, timeout=60, reconnect=True)
+            if vc is not None and vc.is_connected():
+                log.info("voice connected (koshish %s) #%s", koshish, channel.name)
+                return vc
+        except Exception as e:
+            last=e
+            log.warning("voice connect koshish %s fail\n%s", koshish, traceback.format_exc())
+        try: await asyncio.sleep(2)
+        except Exception: pass
+    if last is not None: raise last
+    return guild.voice_client
+
+def _schedule_vc_rejoin(guild):
+    """Bot VC se gir jaye aur vcchat On ho, to khud usi channel me wapas aao."""
+    if not _VOICE_LISTEN.get(guild.id): return
+    home=_VC_VOICE_CH.get(guild.id)
+    if not home: return
+    t=_VC_REJOIN.get(guild.id)
+    if t is not None and not t.done(): return
+    _VC_REJOIN[guild.id]=asyncio.create_task(_vc_rejoin(guild, home))
+
+async def _vc_rejoin(guild, home_id: int):
+    try:
+        await asyncio.sleep(4)
+        if not _VOICE_LISTEN.get(guild.id): return
+        vc=guild.voice_client
+        if vc is not None and vc.is_connected(): return  # khud jud gaya
+        now=time.time()
+        tries=[t for t in _VC_REJOIN_TRIES.get(guild.id, []) if now-t < 300]
+        if len(tries) >= 4:
+            log.warning("VC auto-rejoin: bohot koshish ho gayi guild %s, ab /vcchat On dobara Karo", guild.id)
+            return
+        tries.append(now); _VC_REJOIN_TRIES[guild.id]=tries
+        ch=guild.get_channel(home_id)
+        if ch is None:
+            try: ch=await bot.fetch_channel(home_id)
+            except Exception: return
+        vc=await _join_voice(ch)
+        if vc is not None and vc.is_connected():
+            _start_listening(guild, _VOICE_LISTEN_CH.get(guild.id, home_id))
+            log.info("VC auto-rejoin ho gaya guild %s (#%s)", guild.id, getattr(ch, "name", "?"))
+    except Exception:
+        log.warning("VC auto-rejoin fail\n%s", traceback.format_exc())
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    """Nezu VC se girte hi (net/handshake) — vcchat On ho to khud wapas bula lo."""
+    try:
+        if bot.user is None or member.id != bot.user.id: return
+        guild=member.guild
+        if after is not None and after.channel is not None:
+            if _VOICE_LISTEN.get(guild.id): _VC_VOICE_CH[guild.id]=after.channel.id
+            return
+        if after is not None and after.channel is None:
+            _schedule_vc_rejoin(guild)
+    except Exception:
+        pass
 
 
 class MusicPanelView(discord.ui.View):
@@ -4044,6 +4130,7 @@ async def vcchat_cmd(interaction: discord.Interaction, action: str = "on"):
     ok, wajah=_start_listening(guild, interaction.channel.id)
     if ok:
         await interaction.response.send_message("🎙️ **Nezuko sun rahi hai!** Ab VC me bolo:\n> **'Nezuko, kya Kar rahi ho?'**\nWo naam sunkar bolkar jawab degi 🌸\n_(Har baat se pehle naam lazmi lo; bina naam ke wo reply nahi karegi.)_")
+        asyncio.create_task(_speak_in_vc(guild, "Haa, mai aa gayi hu aur sun rahi hu. Bolo, kya baat hai?"))
     elif wajah == "opus_missing":
         await interaction.response.send_message("⚠️ Termux me `pkg install -y libopus opusfile` karke bot restart Karo, fir `/vcchat On` Karo.", ephemeral=True)
     else:
@@ -4059,11 +4146,7 @@ async def join_cmd(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Pehle khud kisi **voice channel** me join Karo, fir `/join` Karo.", ephemeral=True); return
     vc=interaction.guild.voice_client
     try:
-        if vc is None:
-            _vcls=_voice_recv.VoiceRecvClient if _voice_recv is not None else discord.VoiceClient
-            vc=await voice.channel.connect(cls=_vcls)
-        elif vc.channel != voice.channel:
-            await vc.move_to(voice.channel)
+        vc=await _join_voice(voice.channel)
     except Exception as e:
         log.error("join connect fail\n%s", traceback.format_exc())
         if isinstance(e, RuntimeError) and ("PyNaCl" in str(e) or "davey" in str(e)):
@@ -4090,11 +4173,7 @@ async def play_cmd(interaction: discord.Interaction, song: str):
     lag=await interaction.followup.send(f"🔎 **Nezuko gaana dhundh rahi hai...** 🎵 _{song}_")
     vc=interaction.guild.voice_client
     try:
-        if vc is None:
-            _vcls=_voice_recv.VoiceRecvClient if _voice_recv is not None else discord.VoiceClient
-            vc=await voice.channel.connect(cls=_vcls)
-        elif vc.channel != voice.channel:
-            await vc.move_to(voice.channel)
+        vc=await _join_voice(voice.channel)
     except Exception as e:
         log.error("music connect fail\n%s", traceback.format_exc())
         if isinstance(e, RuntimeError) and ("PyNaCl" in str(e) or "davey" in str(e)):
