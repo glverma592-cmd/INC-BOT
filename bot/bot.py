@@ -3,7 +3,7 @@ INC Bot — Auto-DM + Guild management
 Naya member -> DM + Verify button, /dmtest, /ping, /say, /announce, /clear + GitHub -> Discord bridge
 """
 from __future__ import annotations
-import ast, asyncio, calendar, datetime, io, json, logging, operator, os, random, re, string, time, traceback, urllib.parse
+import ast, asyncio, calendar, datetime, io, json, logging, operator, os, random, re, string, time, traceback, urllib.parse, ctypes.util as _ctypes_util
 from pathlib import Path
 import aiohttp, discord
 from aiohttp import web
@@ -943,6 +943,108 @@ async def ask_cmd(interaction: discord.Interaction, sawal: str):
     except Exception:
         await interaction.followup.send(f"**{interaction.user.display_name}:** {sawal}\n\n{jawab}")
 
+# ---------------- VOICE CHAT (VC me Nezuko tumse baat karegi) ----------------
+async def _tts_bytes(text: str) -> bytes | None:
+    """Nezuko ki soft girl voice me text ko speech me badlo (Gemini TTS, phir edge-tts fallback)."""
+    saaf=re.sub(r"[*_`~#>\[\]()]", "", text or "").strip()
+    saaf=re.sub(r"https?://\S+", "", saaf).strip()
+    if not saaf: return None
+    saaf=saaf[:600]
+    if GEMINI_API_KEY:
+        try:
+            payload={"contents": [{"parts": [{"text": saaf}]}], "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Leda"}}}}}
+            url="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent"
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=45)) as resp:
+                    if resp.status == 200:
+                        data=await resp.json()
+                        import base64 as _b64
+                        for cand in data.get("candidates", []):
+                            for part in cand.get("content", {}).get("parts", []):
+                                inline=part.get("inlineData") or {}
+                                if inline.get("data"):
+                                    return _b64.b64decode(inline["data"])
+                        log.warning("TTS: Gemini 200 par audio part nahi mila")
+                    else:
+                        log.warning("TTS Gemini HTTP %s", resp.status)
+        except Exception:
+            log.warning("TTS Gemini fail\n%s", traceback.format_exc())
+    try:
+        import io as _io
+        bio=_io.BytesIO()
+        def _edge_sync():
+            import edge_tts, asyncio as _aio
+            async def _run():
+                comm=edge_tts.Communicate(saaf, voice="en-IN-NeerjaNeural", rate="+6%", pitch="+12Hz")
+                async for chunk in comm.stream():
+                    if chunk["type"] == "audio": bio.write(chunk["data"])
+            _aio.run(_run())
+        await asyncio.get_event_loop().run_in_executor(None, _edge_sync)
+        data=bio.getvalue()
+        if data: return data
+    except Exception:
+        log.warning("TTS edge fail\n%s", traceback.format_exc())
+    return None
+
+def _tts_file(mp3_bytes: bytes) -> str:
+    name=f"Nezuko_tts_{int(time.time())}_{random.randint(1000, 9999)}.mp3"
+    path=os.path.join("/tmp", name)
+    with open(path, "wb") as f: f.write(mp3_bytes)
+    return path
+
+async def _vc_reply(message, jawab: str):
+    """VC mode: bot VC me hai aur sawal poochhne wala usi VC me hai — to bolkar jawab do."""
+    try:
+        guild=message.guild
+        if guild is None: return False
+        vc=guild.voice_client
+        if vc is None or not vc.is_connected(): return False
+        user_voice=getattr(message.author, "voice", None)
+        if not user_voice or not user_voice.channel or user_voice.channel != vc.channel: return False
+        if not jawab or jawab.startswith("⚠️"): return False
+        if not _ensure_opus():
+            return False
+        try:
+            await message.reply(f"🎙️ {jawab}", mention_author=False)
+        except Exception:
+            pass
+        audio=await _tts_bytes(jawab)
+        if not audio: return False
+        tts_path=_tts_file(audio)
+        try:
+            gaana_baj_raha_tha = vc.is_playing() or vc.is_paused() or bool(_music_of(guild.id).get("current") or _music_of(guild.id).get("queue"))
+            if gaana_baj_raha_tha and (vc.is_playing() or vc.is_paused()):
+                vc.stop()  # gaana rok do, jawab bolkar queue se khud fir chalega
+            if vc.is_playing() or vc.is_paused():
+                vc.stop()
+            done=asyncio.Event()
+            def _done(e, done=done):
+                asyncio.get_event_loop().call_soon_threadsafe(done.set)
+            try:
+                vc.play(discord.FFmpegPCMAudio(tts_path, options="-vn"), after=_done)
+            except Exception:
+                return False
+            try: await asyncio.wait_for(done.wait(), timeout=120)
+            except Exception: pass
+            if gaana_baj_raha_tha:
+                try:
+                    asyncio.create_task(_play_next(guild))
+                except Exception:
+                    pass
+                done=asyncio.Event()
+                def _done2(e, done=done):
+                    asyncio.get_event_loop().call_soon_threadsafe(done.set)
+                vc.play(discord.FFmpegPCMAudio(tts_path, options="-vn"), after=_done2)
+                try: await asyncio.wait_for(done.wait(), timeout=120)
+                except Exception: pass
+        finally:
+            try: os.remove(tts_path)
+            except Exception: pass
+        return True
+    except Exception:
+        log.warning("vc_reply fail\n%s", traceback.format_exc())
+        return False
+
 _CHATBOT_FILE = Path(__file__).resolve().parent / "chatbot_channels.json"
 def _load_chatbot_state():
     """Purana format: [channel_id...] | Naya format: {channels: [...], master_on: true/false}"""
@@ -999,12 +1101,17 @@ async def on_message(message: discord.Message):
                     jawab=await _refresh_ke_sath(soch, "🌸 **Nezuko soch rahi hai...** ✨", _ask_gemini(sawal, hist))
                 hist += [{"role":"user","parts":[{"text":sawal[:2000]}]}, {"role":"model","parts":[{"text":jawab[:2000]}]}]
                 del hist[:-6]
+                boolegi=False
+                try:
+                    boolegi=await _vc_reply(message, jawab)
+                except Exception:
+                    boolegi=False
                 if soch is not None:
                     try:
                         await soch.edit(content=jawab)
                     except Exception:
-                        await message.reply(jawab)
-                else:
+                        if not boolegi: await message.reply(jawab)
+                elif not boolegi:
                     await message.reply(jawab)
     await bot.process_commands(message)
 
@@ -2094,6 +2201,23 @@ try:
     import yt_dlp as _yt_dlp
 except Exception:
     _yt_dlp=None
+_LIBOPUS_OK=[False]
+def _ensure_opus():
+    """Discord voice-speak ke liye opus encoder load karo (Termux fix).
+    opus install na ho to bot sirf sunn sakti hai, bol nahi paati."""
+    try:
+        if not discord.opus.is_loaded():
+            _lib=_ctypes_util.find_library("opus") or "libopus.so.0"
+            discord.opus.load_opus(_lib)
+        _LIBOPUS_OK[0]=True
+    except Exception:
+        log.warning("opus load fail (voice bol nahi seetegi)\n%s", traceback.format_exc())
+        _LIBOPUS_OK[0]=False
+    return _LIBOPUS_OK[0]
+try:
+    _ensure_opus()
+except Exception:
+    pass
 def _ensure_ytdlp():
     """yt-dlp baad me install ho to bot bina restart ke bhi utha lega."""
     global _yt_dlp
@@ -2126,6 +2250,12 @@ class FFmpegYTDLSource(discord.AudioSource):
                 import os as _o
                 _o.remove(self._filename)
             except Exception: pass
+def _prefetch_track(track: dict):
+    """Gaana bajne se pahle background me download kar ke ready rakho — queue me gap nahi aayega."""
+    try:
+        return _yt_download(track)
+    except Exception:
+        return None
 def _yt_download(track: dict) -> str:
     """Song ko local file me download karo (403-proof). Caller FFmpegYTDLSource se chalata hai."""
     import tempfile, os as _os
@@ -2187,6 +2317,7 @@ async def _play_next(guild: discord.Guild):
                 sim=None
             if sim:
                 st["queue"].append(sim)
+                asyncio.create_task(asyncio.get_event_loop().run_in_executor(None, lambda: sim.__setitem__("_prefetched", _prefetch_track(sim))))
                 ch=st.get("text_channel")
                 if ch is not None:
                     try: await ch.send(f"🔀 **Autoplay:** Gaana khatam, similar gaana la rahi hu... 🎵")
@@ -2202,7 +2333,8 @@ async def _play_next(guild: discord.Guild):
     st["last_played"]=track
     # Direct stream URL ki jagah download karo — signed-URL 403 wali dikkat nahi aati.
     try:
-        downloaded=await asyncio.get_event_loop().run_in_executor(None, _yt_download, track)
+        pre=track.pop("_prefetched", None)
+        downloaded=pre or await asyncio.get_event_loop().run_in_executor(None, _yt_download, track)
         source=FFmpegYTDLSource(downloaded)
     except Exception as e:
         log.error("music ffmpeg fail\n%s", traceback.format_exc())
@@ -2218,6 +2350,20 @@ async def _play_next(guild: discord.Guild):
     def _after(error):
         if error: log.warning("music playback error: %s", error)
         asyncio.run_coroutine_threadsafe(_play_next(guild), bot.loop)
+    # Agla gaana pehle se background me download karna shuru Karo (gap-free playback)
+    if st.get("queue"):
+        _nxt=st["queue"][0]
+        try:
+            async def _pre_fetch():
+                try:
+                    if _nxt.pop("_prefetch_started", None): return
+                    _nxt["_prefetch_started"]=True
+                    _nxt["_prefetched"]=await asyncio.get_event_loop().run_in_executor(None, _prefetch_track, _nxt)
+                except Exception:
+                    pass
+            asyncio.create_task(_pre_fetch())
+        except Exception:
+            pass
     try:
         vc.play(source, after=_after)
     except Exception:
