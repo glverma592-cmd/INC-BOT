@@ -2396,11 +2396,26 @@ _vc_tasks: dict[int, asyncio.Task] = {}
 _VC_COOLDOWN: dict[int, float] = {}
 
 def _pcm_to_wav(pcm: bytes) -> bytes:
-    import io, wave
+    """Discord se aaya PCM aksar mono/mixed hota hai — 16kHz mono me
+    saaf karke do, sabse zyada STT isi ko pehchanta hai."""
+    import io, wave, struct as _st
+    try:
+        if len(pcm) % 2: pcm=pcm[:-1]
+        vals=_st.unpack("<%dh" % (len(pcm)//2), pcm)
+        # stereo samjh kar har dusra sample (left) — mono par bhi nuksaan nahi (aadha to chalega)
+        if len(vals) >= 4:
+            mono_vals=vals[0::2]
+        else:
+            mono_vals=vals
+        # 48k -> 16k (har teesra)
+        rate_vals=mono_vals[0::3]
+        raw=_st.pack("<%dh" % len(rate_vals), *rate_vals)
+    except Exception:
+        raw=pcm
     bio=io.BytesIO()
     with wave.open(bio, "wb") as w:
-        w.setnchannels(2); w.setsampwidth(2); w.setframerate(48000)
-        w.writeframes(pcm)
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+        w.writeframes(raw)
     return bio.getvalue()
 
 async def _stt_gemini(wav_bytes: bytes) -> str:
@@ -2437,6 +2452,16 @@ async def _stt_gemini(wav_bytes: bytes) -> str:
     except Exception:
         log.warning("STT google free fail\n%s", traceback.format_exc())
     return ""
+
+
+async def _stt_first_try(wav_bytes: bytes) -> str:
+    """Pehle Google free pehchan (sabse zyada chalti hai), fir Gemini audio."""
+    try:
+        t=await asyncio.get_event_loop().run_in_executor(None, _stt_google_free, wav_bytes)
+        if t: return t
+    except Exception:
+        pass
+    return await _stt_gemini(wav_bytes)
 
 def _stt_google_free(wav_bytes: bytes) -> str:
     """Fallback: SpeechRecognition + Google free STT (16kHz mono chahiye)."""
@@ -2479,8 +2504,10 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
         if now - _VC_COOLDOWN.get(user_id, 0) < 4: return
         wav=_pcm_to_wav(pcm)
         if len(wav) > 4_000_000: return
-        transcript=await _stt_gemini(wav)
-        if not transcript: return
+        transcript=await _stt_first_try(wav)
+        if not transcript:
+            log.warning("STT transcript empty (koi boli samjh nahi aayi)")
+            return
         low=transcript.lower()
         wake=None
         for w in _WAKE_WORDS:
