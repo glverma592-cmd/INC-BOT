@@ -3671,7 +3671,9 @@ def _stt_google_free(wav_bytes: bytes, quick: bool = False) -> str:
         for lang in ("hi-IN", "en-IN", "en-US"):
             try:
                 t=rec.recognize_google(audio, language=lang)
-            except Exception:
+            except Exception as e:
+                # wajah dabao mat — log me dikhe (net band hai ya awaaz samajh nahi aayi)
+                log.warning("STT google %s fail: %s: %s", lang, type(e).__name__, str(e)[:120])
                 continue
             if t: return t
         return ""
