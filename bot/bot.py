@@ -180,6 +180,8 @@ async def on_tree_error(interaction: discord.Interaction, error: app_commands.Ap
 
 @bot.event
 async def on_member_join(member: discord.Member):
+    if member.bot and await _antinuke_check_bot_add(member):
+        return
     await _check_antiraid(member)
     # Auto-role: set kiya hua role naye member ko khud mil jayega
     rid=_autoroles.get(member.guild.id)
@@ -312,6 +314,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="⭐ Levels • Tickets • Reminders", value="Chat karne par XP milega — `/rank` • `/leaderboard` • Support ke liye `/ticket`, band karne ko `/close` • `/reminders` • `/remind_cancel`", inline=False)
     embed.add_field(name="🪙 Economy", value="`/balance` • `/daily` (roz free coins) • `/pay` • `/gamble`", inline=False)
     embed.add_field(name="🛡️ AutoMod", value="`/antilink` • `/antispam` • `/badwords` • `/antiraid` • `/setmodlog` — link, spam, gaali khud delete + raid par alert + saari moderation ka log (mods exempt).", inline=False)
+    embed.add_field(name="🔐 Security / AntiNuke", value="`/antinuke` — 60s me 3+ delete/ban/bot-add par khud action • `/nuke` channel saaf-naya • `/lockdown` pura server band • `/quarantine` roles hatao • `/purge` Ek member ke messages saaf", inline=False)
     embed.add_field(name="🎭 Auto-Role", value="`/autorole_bot_add` (naya member join kare to khud role milega) • `/autorole_bot_remove` • `/autorole_bot_status`", inline=False)
     embed.add_field(name="👑 No Prefix (Owner Only)", value="`/noprefix` — granted member can chat with the AI without `/ask` or a mention. Power lasts **2 months**.", inline=False)
     embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • `/chatbot` • `/summarize` — sawal pucho, tag-chat chalu Karo, ya lambi chat ka short summary banao", inline=False)
@@ -2319,10 +2322,340 @@ async def antiraid_cmd(interaction: discord.Interaction, action: str = "on"):
 @bot.event
 async def on_member_ban(guild: discord.Guild, user: discord.User):
     await _modlog(guild, f"🔨 **Ban:** {user} ({user.id}) ko server se ban kiya gaya.")
+    await _antinuke_event(guild, "member ban", discord.AuditLogAction.ban, user.id)
 
 @bot.event
 async def on_member_unban(guild: discord.Guild, user: discord.User):
     await _modlog(guild, f"♻️ **Unban:** {user} ({user.id}) ka ban hata diya gaya.")
+
+# ---------------- SECURITY: ANTINUKE / NUKE / LOCKDOWN ----------------
+def _antinuke_enabled(guild_id: int) -> bool:
+    return bool(_automod.get(str(guild_id), {}).get("antinuke", False))
+def _antinuke_whitelist(guild_id: int) -> list:
+    return [int(x) for x in _automod.get(str(guild_id), {}).get("antinuke_whitelist", [])]
+_antinuke_hits: dict = {}
+_antinuke_punished: dict = {}
+
+async def _antinuke_find_executor(guild, action, target_id=None):
+    """Audit log se pata karo kisne ye kaam kiya (bot ko View Audit Log chahiye)."""
+    try:
+        me=guild.me
+        if me is None or not me.guild_permissions.view_audit_log: return None
+        abhi=datetime.datetime.now(datetime.timezone.utc)
+        async for entry in guild.audit_logs(limit=8, action=action):
+            try: age=(abhi-entry.created_at).total_seconds()
+            except Exception: age=0
+            if age < -5 or age > 30: continue
+            if target_id is not None and getattr(entry.target, "id", None) != target_id: continue
+            return entry.user
+    except Exception:
+        log.warning("antinuke audit log fail guild %s\n%s", guild.id, traceback.format_exc())
+    return None
+
+async def _antinuke_punish(guild, executor, label: str, count: int):
+    abhi=time.time()
+    key=(guild.id, executor.id)
+    if abhi - _antinuke_punished.get(key, 0) < 600: return
+    _antinuke_punished[key]=abhi
+    member=guild.get_member(executor.id)
+    action_taken="sirf alert (member/role nahi mila)"
+    if member is not None and executor.id != guild.owner_id:
+        if getattr(member, "bot", False):
+            try:
+                await member.kick(reason="AntiNuke: lagatar destructive actions")
+                action_taken="nakli/kharab bot ko kick kar diya"
+            except Exception:
+                action_taken="bot kick nahi ho paya (permission/role)"
+        else:
+            me=guild.me
+            removed=0
+            roles=[r for r in member.roles if r.name != "@everyone" and not r.managed and (me is None or r.position < me.top_role.position)]
+            if roles:
+                try:
+                    await member.remove_roles(*roles, reason="AntiNuke: lagatar destructive actions")
+                    removed=len(roles)
+                except Exception:
+                    pass
+            try:
+                await member.timeout(datetime.timedelta(hours=6), reason="AntiNuke protection")
+            except Exception:
+                pass
+            action_taken=f"{removed} roles hataye + 6 ghante timeout"
+    msg=(f"🚨 **ANTINUKE ALERT!** {executor.mention} (`{executor.id}`) ne 60 second me **{count} destructive kaam** kiye "
+         f"(aakhri: {label}).\n🛡️ Action: {action_taken}\nAgar ye galti se hua hai to server owner unhe wapas role de sakta hai.")
+    log.warning("antinuke trigger guild %s executor %s count %s", guild.id, executor.id, count)
+    await _modlog(guild, msg)
+    ch=getattr(guild, "system_channel", None)
+    if ch is not None:
+        try: await ch.send(msg)
+        except Exception: pass
+
+async def _antinuke_event(guild, label: str, action, target_id=None):
+    """Channel/role delete, ban, kick, webhook jaisi destructive harkatein ginna."""
+    try:
+        if guild is None or not _antinuke_enabled(guild.id): return
+        executor=await _antinuke_find_executor(guild, action, target_id)
+        if executor is None: return
+        if executor.id == guild.owner_id: return
+        if bot.user and executor.id == bot.user.id: return
+        if executor.id in _antinuke_whitelist(guild.id): return
+        abhi=time.time()
+        key=(guild.id, executor.id)
+        hist=[t for t in _antinuke_hits.get(key, []) if abhi - t <= 60]
+        hist.append(abhi)
+        _antinuke_hits[key]=hist
+        log.info("antinuke: %s ne %s kiya (60s me kul %s)", executor, label, len(hist))
+        if len(hist) >= 3:
+            _antinuke_hits[key]=[]
+            await _antinuke_punish(guild, executor, label, len(hist))
+    except Exception:
+        log.warning("antinuke event fail\n%s", traceback.format_exc())
+
+async def _antinuke_check_bot_add(member) -> bool:
+    """AntiNuke ON ho to bina-bharose ke user ke dwara add kiya bot roko."""
+    try:
+        if not _antinuke_enabled(member.guild.id): return False
+        await asyncio.sleep(1.5)
+        adder=await _antinuke_find_executor(member.guild, discord.AuditLogAction.bot_add, member.id)
+        if adder is None: return False
+        if adder.id == member.guild.owner_id: return False
+        if bot.user and adder.id == bot.user.id: return False
+        if adder.id in _antinuke_whitelist(member.guild.id): return False
+        try:
+            await member.kick(reason=f"AntiNuke: {adder} ne bina whitelist ke bot add kiya")
+            ok=True
+        except Exception:
+            ok=False
+        msg=f"🚨 **ANTINUKE:** {adder.mention} ne bot {member.mention} add kiya — whitelist me nahi hai. " + ("Bot ko kick kar diya gaya." if ok else "Bot kick nahi ho paya, turant check Karo!")
+        await _modlog(member.guild, msg)
+        ch=getattr(member.guild, "system_channel", None)
+        if ch is not None:
+            try: await ch.send(msg)
+            except Exception: pass
+        return ok
+    except Exception:
+        log.warning("antinuke bot-add check fail\n%s", traceback.format_exc())
+        return False
+
+@bot.event
+async def on_guild_channel_delete(channel):
+    guild=getattr(channel, "guild", None)
+    if guild is not None:
+        await _antinuke_event(guild, "channel delete", discord.AuditLogAction.channel_delete, channel.id)
+
+@bot.event
+async def on_guild_role_delete(role):
+    guild=getattr(role, "guild", None)
+    if guild is not None:
+        await _antinuke_event(guild, "role delete", discord.AuditLogAction.role_delete, role.id)
+
+@bot.event
+async def on_member_remove(member):
+    guild=getattr(member, "guild", None)
+    if guild is not None:
+        await _antinuke_event(guild, "member kick", discord.AuditLogAction.kick, member.id)
+
+@bot.event
+async def on_webhooks_update(channel):
+    guild=getattr(channel, "guild", None)
+    if guild is not None:
+        await _antinuke_event(guild, "webhook change", discord.AuditLogAction.webhook_create)
+
+@bot.tree.command(name="antinuke", description="AntiNuke security: mass delete/ban/bot-add se server bachaao (admin)")
+@app_commands.describe(action="On, Off, Status, Trust, Untrust, ya Whitelist", member="Trust/Untrust ke liye member chuno")
+@app_commands.choices(action=[
+    app_commands.Choice(name="On — protection chalu", value="on"),
+    app_commands.Choice(name="Off — protection band", value="off"),
+    app_commands.Choice(name="Status — halat dekho", value="status"),
+    app_commands.Choice(name="Trust — member ko whitelist me daalo", value="trust"),
+    app_commands.Choice(name="Untrust — whitelist se hatao", value="untrust"),
+    app_commands.Choice(name="Whitelist — bharosemand list dekho", value="whitelist"),
+])
+async def antinuke_cmd(interaction: discord.Interaction, action: str = "status", member: discord.Member = None):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ AntiNuke sirf server me chalta hai.", ephemeral=True); return
+    if action in ("on", "off", "trust", "untrust") and not _is_admin(interaction):
+        await interaction.response.send_message("❌ Ye sirf server **admins** ke liye hai.", ephemeral=True); return
+    gid=str(interaction.guild.id)
+    cfg=_automod.setdefault(gid, {})
+    if action == "on":
+        cfg["antinuke"]=True; _save_automod()
+        await interaction.response.send_message("🛡️ **AntiNuke ON!** ✅\nAb koi bhi (admin hi kyun na ho) 60 second me **3+ channel/role delete, ban, kick ya webhook** karega to uske roles hatake 6 ghante timeout milega. Bina whitelist ke add kiya gaya **bot kick** ho jayega.\nBharosemand mods ko `/antinuke Trust` se whitelist Karo. Server owner hamesha safe hai.", ephemeral=True)
+    elif action == "off":
+        cfg["antinuke"]=False; _save_automod()
+        await interaction.response.send_message("🛡️ AntiNuke **OFF** kar diya hai.", ephemeral=True)
+    elif action == "trust":
+        if member is None:
+            await interaction.response.send_message("❌ Trust karne ke liye `member` bhi chuno.", ephemeral=True); return
+        wl=cfg.setdefault("antinuke_whitelist", [])
+        if member.id not in wl: wl.append(member.id); _save_automod()
+        await interaction.response.send_message(f"✅ {member.mention} ab AntiNuke **whitelist** me hai — uspar action nahi hoga.", ephemeral=True)
+    elif action == "untrust":
+        if member is None:
+            await interaction.response.send_message("❌ Untrust karne ke liye `member` bhi chuno.", ephemeral=True); return
+        wl=cfg.setdefault("antinuke_whitelist", [])
+        if member.id in wl: wl.remove(member.id); _save_automod()
+        await interaction.response.send_message(f"✅ {member.mention} ko whitelist se hata diya.", ephemeral=True)
+    elif action == "whitelist":
+        wl=_antinuke_whitelist(interaction.guild.id)
+        txt="\n".join(f"• <@{u}>" for u in wl) if wl else "koi nahi — sirf server owner safe hai"
+        await interaction.response.send_message(f"🛡️ **AntiNuke Whitelist:**\n{txt}", ephemeral=True)
+    else:
+        state="ON ✅" if _antinuke_enabled(interaction.guild.id) else "OFF"
+        await interaction.response.send_message(f"🛡️ AntiNuke is **{state}** in this server.", ephemeral=True)
+
+@bot.tree.command(name="nuke", description="Channel ko nuke Karo: saare messages saaf, channel naya banega (sirf admin)")
+@app_commands.describe(channel="Konsa channel nuke karna hai (khali = yahi channel)")
+async def nuke_cmd(interaction: discord.Interaction, channel: discord.TextChannel = None):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Nuke sirf server me chalta hai.", ephemeral=True); return
+    if not _is_admin(interaction):
+        await interaction.response.send_message("❌ Channel nuke sirf server **admins** kar sakte hai.", ephemeral=True); return
+    target=channel or interaction.channel
+    if not isinstance(target, discord.TextChannel):
+        await interaction.response.send_message("❌ Sirf text channel nuke hota hai.", ephemeral=True); return
+    await interaction.response.defer(ephemeral=True)
+    pos=target.position
+    try:
+        clone=await target.clone(reason=f"Channel nuke by {interaction.user}")
+        try: await clone.edit(position=pos)
+        except Exception: pass
+        await target.delete(reason=f"Channel nuke by {interaction.user}")
+    except discord.Forbidden:
+        await interaction.followup.send("❌ Nuke nahi ho paya — mujhe **Manage Channels** permission chahiye.", ephemeral=True); return
+    except Exception:
+        log.error("nuke fail\n%s", traceback.format_exc())
+        await interaction.followup.send("⚠️ Nuke fail ho gaya — channel permissions check Karo.", ephemeral=True); return
+    embed=discord.Embed(title="💥 Channel Nuked!", description=f"Ye channel {interaction.user.mention} ne nuke kiya — saare purane messages saaf ho gaye. Channel bilkul naya hai! ✨", color=0xe74c3c)
+    try: await clone.send(embed=embed)
+    except Exception: pass
+    try: await interaction.followup.send(f"💥 **Nuke ho gaya!** Naya channel: {clone.mention}", ephemeral=True)
+    except Exception: pass
+
+@bot.tree.command(name="lockdown", description="Poora server lockdown: sab text channels me bolna band/kholo (sirf admin)")
+@app_commands.describe(action="On = sab lock, Off = pehle jaisa kholo, Status = halat")
+@app_commands.choices(action=[
+    app_commands.Choice(name="On — server lockdown Karo", value="on"),
+    app_commands.Choice(name="Off — lockdown hatao (purani halat wapas)", value="off"),
+    app_commands.Choice(name="Status — lockdown ki halat", value="status"),
+])
+async def lockdown_cmd(interaction: discord.Interaction, action: str = "status"):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Lockdown sirf server me chalta hai.", ephemeral=True); return
+    if action in ("on", "off") and not _is_admin(interaction):
+        await interaction.response.send_message("❌ Lockdown sirf server **admins** ke liye hai.", ephemeral=True); return
+    gid=str(interaction.guild.id)
+    cfg=_automod.setdefault(gid, {})
+    if action == "status":
+        saved=cfg.get("lockdown", {})
+        halat=f"**ON 🔒** ({len(saved)} channels locked)" if saved else "**OFF**"
+        await interaction.response.send_message(f"🔒 Server Lockdown: {halat}", ephemeral=True); return
+    await interaction.response.defer(ephemeral=True)
+    if action == "on":
+        saved=cfg.setdefault("lockdown", {})
+        ok=fail=0
+        for ch in interaction.guild.text_channels:
+            if str(ch.id) in saved: continue
+            purana=ch.overwrites_for(interaction.guild.default_role).send_messages
+            try:
+                await ch.set_permissions(interaction.guild.default_role, send_messages=False, reason=f"Server lockdown by {interaction.user}")
+                saved[str(ch.id)]=purana; ok+=1
+            except Exception:
+                fail+=1
+        _save_automod()
+        await interaction.followup.send(f"🔒 **Server Lockdown ON!** {ok} channels lock hue" + (f", {fail} nahi ho paye (permission)." if fail else ".") + "\n`/lockdown Off` se sab pehle jaisa khul jayega. (Admins/mods bol sakte hai agar unke role par allow hai.)", ephemeral=True)
+    else:
+        saved=cfg.pop("lockdown", {})
+        ok=fail=0
+        for cid, purana in list(saved.items()):
+            ch=interaction.guild.get_channel(int(cid))
+            if ch is None: continue
+            try:
+                await ch.set_permissions(interaction.guild.default_role, send_messages=purana, reason=f"Lockdown off by {interaction.user}")
+                ok+=1
+            except Exception:
+                fail+=1
+        _save_automod()
+        await interaction.followup.send(f"🔓 **Lockdown OFF!** {ok} channels pehle jaise khul gaye" + (f", {fail} fail hue." if fail else "."), ephemeral=True)
+
+@bot.tree.command(name="quarantine", description="Member ke saare roles hata ke alag Karo (mod) — wapas /unquarantine se milega")
+@app_commands.describe(member="Kis member ko quarantine karna hai")
+async def quarantine_cmd(interaction: discord.Interaction, member: discord.Member):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Sirf server me chalta hai.", ephemeral=True); return
+    if not interaction.user.guild_permissions.manage_roles:
+        await _deny(interaction); return
+    if member.id == interaction.guild.owner_id or member.id == interaction.user.id or (bot.user and member.id == bot.user.id):
+        await interaction.response.send_message("❌ Is member ko quarantine nahi kar sakte.", ephemeral=True); return
+    me=interaction.guild.me
+    hatao=[r for r in member.roles if r.name != "@everyone" and not r.managed and (me is None or r.position < me.top_role.position)]
+    if not hatao:
+        await interaction.response.send_message(f"ℹ️ {member.mention} ke paas hatane layak koi role nahi hai (ya uske roles mere se upar hai).", ephemeral=True); return
+    gid=str(interaction.guild.id)
+    cfg=_automod.setdefault(gid, {})
+    removed=[]
+    for r in hatao:
+        try:
+            await member.remove_roles(r, reason=f"Quarantine by {interaction.user}")
+            removed.append(r.id)
+        except Exception:
+            pass
+    if removed:
+        cfg.setdefault("quarantine", {})[str(member.id)]=removed; _save_automod()
+    await interaction.response.send_message(f"🚧 {member.mention} ko **quarantine** kar diya — {len(removed)} roles hataye. Wapas dene ke liye `/unquarantine` Karo.")
+
+@bot.tree.command(name="unquarantine", description="Quarantine kiye member ke roles wapas do (mod)")
+@app_commands.describe(member="Kis member ke roles wapas dene hai")
+async def unquarantine_cmd(interaction: discord.Interaction, member: discord.Member):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Sirf server me chalta hai.", ephemeral=True); return
+    if not interaction.user.guild_permissions.manage_roles:
+        await _deny(interaction); return
+    gid=str(interaction.guild.id)
+    cfg=_automod.setdefault(gid, {})
+    record=cfg.setdefault("quarantine", {}).pop(str(member.id), None)
+    if not record:
+        await interaction.response.send_message(f"ℹ️ {member.mention} quarantine me nahi hai — wapas dene ke liye koi record nahi.", ephemeral=True); return
+    _save_automod()
+    me=interaction.guild.me
+    wapas=0
+    for rid in record:
+        role=interaction.guild.get_role(int(rid))
+        if role is None or role.managed or (me is not None and role.position >= me.top_role.position): continue
+        try:
+            await member.add_roles(role, reason=f"Unquarantine by {interaction.user}")
+            wapas+=1
+        except Exception:
+            pass
+    await interaction.response.send_message(f"✅ {member.mention} ko **{wapas} roles** wapas mil gaye — quarantine khatam.")
+
+@bot.tree.command(name="purge", description="Kisi Ek member ke messages is channel se saaf Karo (mod)")
+@app_commands.describe(member="Kis member ke messages delete karne hai", amount="Kitne zyada-se-zyada message (1-100)")
+async def purge_cmd(interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1, 100] = 50):
+    if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
+        await interaction.response.send_message("❌ Purge sirf server ke text channel me chalta hai.", ephemeral=True); return
+    if not _is_mod(interaction):
+        await _deny(interaction); return
+    await interaction.response.defer(ephemeral=True)
+    msgs=[]
+    try:
+        async for m in interaction.channel.history(limit=500):
+            if m.author.id == member.id:
+                msgs.append(m)
+                if len(msgs) >= amount: break
+    except Exception:
+        await interaction.followup.send("❌ History nahi padh paya — **Read Message History** permission chahiye.", ephemeral=True); return
+    if not msgs:
+        await interaction.followup.send(f"ℹ️ Pichle messages me {member.mention} ka koi message nahi mila.", ephemeral=True); return
+    try:
+        if len(msgs) == 1:
+            await msgs[0].delete()
+        else:
+            await interaction.channel.delete_messages(msgs)
+        await interaction.followup.send(f"🧹 {member.mention} ke **{len(msgs)} messages** delete ho gaye.", ephemeral=True)
+    except Exception:
+        await interaction.followup.send("⚠️ Delete nahi ho paya — 14 din se purane messages Discord bulk-delete nahi karne deta, ya permission nahi hai.", ephemeral=True)
+
 
 # ---------------- MUSIC SYSTEM ----------------
 try:
