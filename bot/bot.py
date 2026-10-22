@@ -1087,7 +1087,7 @@ def _tts_file(mp3_bytes: bytes) -> str:
     return path
 
 async def _vc_reply(message, jawab: str):
-    """VC mode: bot VC me hai aur sawal poochhne wala usi VC me hai — to bolkar jawab do."""
+    """VC mode: bot VC me hai aur sawal wala usi VC me hai — to bolkar jawab do."""
     try:
         guild=message.guild
         if guild is None: return False
@@ -1095,46 +1095,14 @@ async def _vc_reply(message, jawab: str):
         if vc is None or not vc.is_connected(): return False
         user_voice=getattr(message.author, "voice", None)
         if not user_voice or not user_voice.channel or user_voice.channel != vc.channel: return False
-        if not jawab or jawab.startswith("⚠️"): return False
-        if not _ensure_opus():
-            return False
+        if not jawab or jawab.startswith("\u26a0\ufe0f"): return False
+        if not _ensure_opus(): return False
         try:
             await message.reply(f"🎙️ {jawab}", mention_author=False)
         except Exception:
             pass
-        audio=await _tts_bytes(jawab)
-        if not audio: return False
-        tts_path=_tts_file(audio)
-        try:
-            gaana_baj_raha_tha = vc.is_playing() or vc.is_paused() or bool(_music_of(guild.id).get("current") or _music_of(guild.id).get("queue"))
-            if gaana_baj_raha_tha and (vc.is_playing() or vc.is_paused()):
-                vc.stop()  # gaana rok do, jawab bolkar queue se khud fir chalega
-            if vc.is_playing() or vc.is_paused():
-                vc.stop()
-            done=asyncio.Event()
-            def _done(e, done=done):
-                asyncio.get_event_loop().call_soon_threadsafe(done.set)
-            try:
-                vc.play(discord.FFmpegPCMAudio(tts_path, options="-vn"), after=_done)
-            except Exception:
-                return False
-            try: await asyncio.wait_for(done.wait(), timeout=120)
-            except Exception: pass
-            if gaana_baj_raha_tha:
-                try:
-                    asyncio.create_task(_play_next(guild))
-                except Exception:
-                    pass
-                done=asyncio.Event()
-                def _done2(e, done=done):
-                    asyncio.get_event_loop().call_soon_threadsafe(done.set)
-                vc.play(discord.FFmpegPCMAudio(tts_path, options="-vn"), after=_done2)
-                try: await asyncio.wait_for(done.wait(), timeout=120)
-                except Exception: pass
-        finally:
-            try: os.remove(tts_path)
-            except Exception: pass
-        return True
+        # awaaz sirf _speak_in_vc bolegi (gaana rok ke bol, fir queue) — ek hi baar bolegi
+        return await _speak_in_vc(guild, jawab)
     except Exception:
         log.warning("vc_reply fail\n%s", traceback.format_exc())
         return False
