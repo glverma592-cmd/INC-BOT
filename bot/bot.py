@@ -2503,17 +2503,38 @@ class _WakeSink(_voice_recv.AudioSink if _voice_recv is not None else object):
         self.buffers: dict[int, bytearray] = {}
         self.last_seen: dict[int, float] = {}
         self.started=time.time()
+        self._decoders: dict[int, object] = {}
+        self._badcount: dict[int, int] = {}
     def wants_opus(self) -> bool:
-        return False
-    def write(self, data):
+        # opus ham khud decode karenge taaki ek corrupted packet se
+        # library ka sunne wala hissa crash na ho (OpusError fix)
+        return True
+    def write(self, user, data):
         try:
-            if _voice_recv is not None and hasattr(data, "source"):
-                user=data.source
-                pcm=getattr(data, "pcm", None) or getattr(data, "opus", b"")
-            else:
-                return
-            uid=getattr(user, "id", None) if not isinstance(user, int) else user
+            uid=getattr(user, "id", None)
+            if uid is None and _voice_recv is not None and hasattr(data, "source") and data.source is not None:
+                uid=getattr(data.source, "id", None)
             if uid is None or (bot.user and uid == bot.user.id): return
+            opus_bytes=None
+            if data is not None:
+                opus_bytes=getattr(data, "opus", None)
+                if not opus_bytes:
+                    pkt=getattr(data, "packet", None)
+                    opus_bytes=getattr(pkt, "decrypted_data", None) if pkt is not None else None
+            if not opus_bytes: return
+            if opus_bytes == b"\xf8\xff\xfe": return  # Discord silence frame — bolna nahi hai
+            dec=self._decoders.get(uid)
+            if dec is None:
+                try: dec=discord.opus.Decoder(); self._decoders[uid]=dec
+                except Exception: return
+            try:
+                pcm=dec.decode(opus_bytes, fec=False)
+            except Exception:
+                # kharab packet — decoder reset karo, ye packet chhodo, sunna chlta rahega
+                self._badcount[uid]=self._badcount.get(uid, 0)+1
+                try: self._decoders[uid]=discord.opus.Decoder()
+                except Exception: self._decoders.pop(uid, None)
+                return
             if not pcm: return
             buf=self.buffers.setdefault(uid, bytearray())
             buf.extend(pcm)
@@ -2524,7 +2545,7 @@ class _WakeSink(_voice_recv.AudioSink if _voice_recv is not None else object):
         except Exception:
             pass
     def cleanup(self):
-        self.buffers.clear(); self.last_seen.clear()
+        self.buffers.clear(); self.last_seen.clear(); self._decoders.clear()
     async def watcher(self):
         """Chup ho jaye to boli ka tukda process karo (0.9 sec ki chuppi = baat khatm)."""
         while _VOICE_LISTEN.get(self.guild.id):
