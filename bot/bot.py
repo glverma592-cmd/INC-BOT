@@ -2446,20 +2446,25 @@ _VOICE_LISTEN_CH: dict[int, int] = {}
 _vc_tasks: dict[int, asyncio.Task] = {}
 _VC_COOLDOWN: dict[int, float] = {}
 
+def _pcm_to_wav_48k(pcm: bytes, channels: int = 1) -> bytes:
+    """Awaaz ko jaisa-mila WAV banao (48k, koi kata-mar nahi) — Gemini STT ke liye."""
+    import io, wave
+    if len(pcm) % 2: pcm=pcm[:-1]
+    bio=io.BytesIO()
+    with wave.open(bio, "wb") as w:
+        w.setnchannels(max(1, min(2, channels))); w.setsampwidth(2); w.setframerate(48000)
+        w.writeframes(pcm)
+    return bio.getvalue()
+
 def _pcm_to_wav(pcm: bytes) -> bytes:
-    """Discord se aaya PCM aksar mono/mixed hota hai — 16kHz mono me
-    saaf karke do, sabse zyada STT isi ko pehchanta hai."""
+    """Discord PCM (mono hone ki sabse zyada ummeed) ko 16kHz mono WAV me badlo.
+    Purani galti: mono ko stereo samajh ke aadhi awaaz feink dete the — isi se boli samajh nahi aati thi."""
     import io, wave, struct as _st
     try:
         if len(pcm) % 2: pcm=pcm[:-1]
         vals=_st.unpack("<%dh" % (len(pcm)//2), pcm)
-        # stereo samjh kar har dusra sample (left) — mono par bhi nuksaan nahi (aadha to chalega)
-        if len(vals) >= 4:
-            mono_vals=vals[0::2]
-        else:
-            mono_vals=vals
-        # 48k -> 16k (har teesra)
-        rate_vals=mono_vals[0::3]
+        # 48k mono -> 16k (har teesra sample)
+        rate_vals=vals[0::3]
         raw=_st.pack("<%dh" % len(rate_vals), *rate_vals)
     except Exception:
         raw=pcm
@@ -2527,7 +2532,7 @@ async def _stt_gemini_once(wav_bytes: bytes) -> str:
         log.warning("STT Gemini fail\n%s", traceback.format_exc())
         return ""
 
-async def _stt_first_try(wav_bytes: bytes) -> str:
+async def _stt_first_try(wav_bytes: bytes, wav48_bytes: bytes = b"") -> str:
     """Awaaz samajhne ki race: Google-free aur Gemini dono ek saath —
     jo pehle sahi transcript de, wahi lo (tez + sahi)."""
     async def _google():
@@ -2536,7 +2541,7 @@ async def _stt_first_try(wav_bytes: bytes) -> str:
         except Exception:
             log.warning("STT google fail\n%s", traceback.format_exc())
             return ""
-    tasks={asyncio.create_task(_google()): "google-free", asyncio.create_task(_stt_gemini_once(wav_bytes)): "gemini"}
+    tasks={asyncio.create_task(_google()): "google-free", asyncio.create_task(_stt_gemini_once(wav48_bytes or wav_bytes)): "gemini"}
     deadline=time.time()+16
     pending=set(tasks)
     try:
@@ -2614,9 +2619,17 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
         if not _VOICE_LISTEN.get(guild.id): return
         now=time.time()
         if now - _VC_COOLDOWN.get(user_id, 0) < 2.5: return
+        import struct as _stt_st
+        try:
+            _vals=_stt_st.unpack("<%dh" % (len(pcm)//2), pcm[:len(pcm)//2*2])
+            _mx=max((abs(v) for v in _vals), default=0)
+        except Exception:
+            _mx=0
+        log.info("VC awaaz level max=%s (0=chup, 1000+=halki, 8000+=saaf)", _mx)
+        wav48=_pcm_to_wav_48k(pcm, 1)
         wav=_pcm_to_wav(pcm)
-        if len(wav) > 4_000_000: return
-        transcript=await _stt_first_try(wav)
+        if len(wav48) > 6_000_000: return
+        transcript=await _stt_first_try(wav, wav48)
         if not transcript:
             log.warning("STT transcript empty (koi boli samjh nahi aayi)")
             return
