@@ -2153,16 +2153,22 @@ def _yt_extract(query: str) -> dict:
             info=entries[0]
         return {"title": info.get("title", "Unknown song"), "url": info.get("url"), "webpage": info.get("webpage_url", ""), "duration": info.get("duration") or 0, "vid": info.get("id", "")}
 def _yt_similar(track: dict) -> dict | None:
-    """Uske gaane jaisa (similar) gaana dhundo — autoplay ke liye."""
-    base=(track.get("title") or "").strip()
-    if not base: return None
+    """Uske gaane jaisa (similar) gaana dhundo autoplay ke liye.
+    Titles YouTube search me cleaned rakhe to sahi results aate hai."""
+    raw=(track.get("title") or "").strip()
+    if not raw: return None
+    for ch_to_cut in ("|", "–", "—", "(", "[", " ft", " Ft", "Feat", "lyrics", "Lyrics", "full video", "official video", "Official Video", "song", "Song", "S O N G", "video"):
+        raw=raw.split(ch_to_cut)[0].strip()
+    base=raw.strip(" -–—|")
+    if len(base) < 3: base=(track.get("title") or "")[:40]
     opts=dict(_YTDL_OPTS); opts["default_search"]="ytsearch5:"
     with _yt_dlp.YoutubeDL(opts) as ydl:
-        info=ydl.extract_info(base + " similar songs", download=False)
+        info=ydl.extract_info(base + " similar mix", download=False)
         for e in (info.get("entries") or []):
             if not e: continue
-            if e.get("id") and e.get("id") != track.get("vid"):
-                return {"title": e.get("title", "Unknown song"), "url": e.get("url"), "webpage": e.get("webpage_url", ""), "duration": e.get("duration") or 0, "vid": e.get("id", ""), "requester": "Autoplay 🔀"}
+            vid=e.get("id"); wp=e.get("webpage_url") or (("https://www.youtube.com/watch?v="+vid) if vid else None)
+            if vid and vid != track.get("vid") and wp:
+                return {"title": e.get("title", "Unknown song"), "url": wp, "webpage": wp, "duration": e.get("duration") or 0, "vid": vid, "requester": "Autoplay 🔀"}
     return None
 
 async def _play_next(guild: discord.Guild):
@@ -2173,7 +2179,7 @@ async def _play_next(guild: discord.Guild):
         st["current"]=None
         return
     if not st["queue"]:
-        last=st.get("current")
+        last=st.get("last_played") or st.get("current")
         if st.get("autoplay", True) and last and _ensure_ytdlp() is not None:
             try:
                 sim=await asyncio.get_event_loop().run_in_executor(None, _yt_similar, last)
@@ -2193,6 +2199,7 @@ async def _play_next(guild: discord.Guild):
             return
     track=st["queue"].pop(0)
     st["current"]=track
+    st["last_played"]=track
     # Direct stream URL ki jagah download karo — signed-URL 403 wali dikkat nahi aati.
     try:
         downloaded=await asyncio.get_event_loop().run_in_executor(None, _yt_download, track)
@@ -2203,7 +2210,10 @@ async def _play_next(guild: discord.Guild):
         if ch is not None:
             try: await ch.send(f"⚠️ Gaana nahi chal paya — wajah: `{str(e)[:120]}`")
             except Exception: pass
-        st["current"]=None
+        remaining=len(st.get("queue") or [])
+        nxt_exists=bool(st.get("queue"))
+        if nxt_exists:
+            asyncio.create_task(_play_next(guild))
         return
     def _after(error):
         if error: log.warning("music playback error: %s", error)
