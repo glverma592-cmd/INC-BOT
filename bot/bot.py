@@ -4232,14 +4232,24 @@ def main():
         # bot online hona NAHI rukna chahiye — pehle yehi ek chhupa crash tha
         try: await start_http_server()
         except Exception: log.warning("HTTP server start nahi hua (port busy?) — bot phir bhi online hoga\n%s", traceback.format_exc())
-        try:
-            await bot.start(TOKEN)
-        except discord.LoginFailure:
-            log.error("LOGIN FAIL: token galat/kharab hai (401). .env me sahi DISCORD_BOT_TOKEN dalo — bot DM wala purana tareeka hi chalega.")
-            raise SystemExit(1)
-        except discord.PrivilegedIntentsRequired:
-            log.error("LOGIN FAIL: Developer Portal me Server Members Intent ON Karo (Privileged Gateway Intents).")
-            raise SystemExit(1)
+        # Supervisor loop: net/DNS ki wajah se gateway connect pehli baar
+        # fail ho to discord.py khud AttributeError se resumr jata hai
+        # (ws None par .sequence) — isliye bot band nahi hoga, retry hoga.
+        _tries=0
+        while True:
+            try:
+                await bot.start(TOKEN)
+                break  # saaf band (bot.close) — bahar niklo
+            except discord.LoginFailure:
+                log.error("LOGIN FAIL: token galat/kharab hai (401). .env me sahi DISCORD_BOT_TOKEN dalo — bot DM wala purana tareeka hi chalega.")
+                raise SystemExit(1)
+            except discord.PrivilegedIntentsRequired:
+                log.error("LOGIN FAIL: Developer Portal me Server Members Intent ON Karo (Privileged Gateway Intents).")
+                raise SystemExit(1)
+            except Exception:
+                _tries+=1
+                log.error("Discord se connect fail (network/DNS gadbad?) — 20s me retry #%s\n%s", _tries, traceback.format_exc())
+                await asyncio.sleep(20)
     try: asyncio.run(_run())
     except KeyboardInterrupt: pass
 if __name__=="__main__": main()
