@@ -2229,7 +2229,8 @@ def _ensure_ytdlp():
         except Exception:
             log.warning("yt-dlp import fail\n%s", traceback.format_exc())
     return _yt_dlp
-_YTDL_OPTS={"format": "bestaudio/best", "noplaylist": True, "quiet": True, "no_warnings": True, "default_search": "ytsearch1:"}
+_YTDL_OPTS={"format": "bestaudio/best", "noplaylist": True, "quiet": True, "no_warnings": True, "default_search": "ytsearch1:",
+            "extractor_args": {"youtube": {"player_client": ["android", "android_vr", "web"]}}}
 _FFMPEG_OPTS={"before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5", "options": "-vn"}
 class FFmpegYTDLSource(discord.AudioSource):
     """Audio source: yt-dlp pehle song ko file me download kare, fir ffmpeg usko chale.
@@ -2317,6 +2318,7 @@ async def _play_next(guild: discord.Guild):
                 sim=None
             if sim:
                 st["queue"].append(sim)
+                # Autoplay wala gaana bhi pehle se download hona chalu — Khatam hone par gap nahin aayega
                 asyncio.create_task(asyncio.get_event_loop().run_in_executor(None, lambda: sim.__setitem__("_prefetched", _prefetch_track(sim))))
                 ch=st.get("text_channel")
                 if ch is not None:
