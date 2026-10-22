@@ -2376,6 +2376,186 @@ async def _play_next(guild: discord.Guild):
             await ch.send(f"🎵 **Now Playing:** {track['title']}\n_(Requested by {track['requester']})_\n🔀 Autoplay: **{'ON' if st.get('autoplay', True) else 'OFF'}** _(Panel se control Karo 👇)_", view=MusicPanelView())
         except Exception: pass
 
+# ------------- MIC LISTEN: Nezuko naam sunke VC me bolkar jawab -------------
+_VOICE_LISTEN: dict[int, bool] = {}
+_VOICE_LISTEN_CH: dict[int, int] = {}
+_vc_tasks: dict[int, asyncio.Task] = {}
+_VC_COOLDOWN: dict[int, float] = {}
+
+def _pcm_to_wav(pcm: bytes) -> bytes:
+    import io, wave
+    bio=io.BytesIO()
+    with wave.open(bio, "wb") as w:
+        w.setnchannels(2); w.setsampwidth(2); w.setframerate(48000)
+        w.writeframes(pcm)
+    return bio.getvalue()
+
+async def _stt_gemini(wav_bytes: bytes) -> str:
+    """User ki boli hui baat ko text me badlo (Gemini audio) — wake word check ke liye."""
+    if not GEMINI_API_KEY: return ""
+    import base64 as _b64
+    payload={"contents": [{"parts": [{"text": "Transcribe EXACTLY what the user said in this audio. Return ONLY the transcript text, no extra words."}, {"inline_data": {"mime_type": "audio/wav", "data": _b64.b64encode(wav_bytes).decode()}}]}]}
+    for model in [GEMINI_MODEL, "gemini-3-flash-preview", "gemini-flash-lite-latest"]:
+        try:
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status == 200:
+                        data=await resp.json()
+                        try:
+                            t=(data["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
+                            if t: return t
+                        except Exception: pass
+                    else:
+                        log.warning("STT HTTP %s model %s", resp.status, model)
+        except Exception:
+            log.warning("STT fail %s\n%s", model, traceback.format_exc())
+    return ""
+
+_WAKE_WORDS=("nezuko", "Nezuko", "nezuku", "nezko", "nuzuko", "ne juko", "ne zuko")
+async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
+    """Ek bandi hui boli process Karo: wake word -> sawal -> jawab -> VC me bol do."""
+    try:
+        if not _VOICE_LISTEN.get(guild.id): return
+        now=time.time()
+        if now - _VC_COOLDOWN.get(user_id, 0) < 4: return
+        wav=_pcm_to_wav(pcm)
+        if len(wav) > 4_000_000: return
+        transcript=await _stt_gemini(wav)
+        if not transcript: return
+        low=transcript.lower()
+        wake=None
+        for w in _WAKE_WORDS:
+            if w in low: wake=w; break
+        if wake is None: return
+        _VC_COOLDOWN[user_id]=time.time()
+        sawal=transcript
+        idx=sawal.lower().find(wake)
+        if idx >= 0:
+            sawal=(sawal[:idx] + " " + sawal[idx+len(wake):]).strip(" ,.!?\n")
+        ch=None
+        chid=_VOICE_LISTEN_CH.get(guild.id)
+        if chid:
+            try: ch=await bot.fetch_channel(chid)
+            except Exception: ch=None
+        if not sawal or len(sawal) < 2:
+            jawab="Haa bolo, mai sun rahi hu! 🌸"
+        else:
+            hist=_memory.setdefault((guild.id, user_id), [])
+            member=None
+            try: member=guild.get_member(user_id)
+            except Exception: pass
+            naam=member.display_name if member else "friend"
+            jawab=await _ask_gemini(f"{naam} ne VC me bola: {sawal[:1500]}. Short me jawab do (VC me bolna hai), max 60 shabd.", hist)
+            hist += [{"role": "user", "parts": [{"text": sawal[:1500]}]}, {"role": "model", "parts": [{"text": jawab[:1500]}]}]
+            del hist[:-6]
+        if ch is not None:
+            try: await ch.send(f"🎙️ **Nezuko VC:** {jawab}")
+            except Exception: pass
+        await _speak_in_vc(guild, jawab)
+    except Exception:
+        log.warning("voice utterance handle fail\n%s", traceback.format_exc())
+
+async def _speak_in_vc(guild, text: str) -> bool:
+    """VC me bol do (gaana baj raha ho to rok ke bolti hu, fir queue se fir chalega)."""
+    try:
+        vc=guild.voice_client
+        if vc is None or not vc.is_connected(): return False
+        if not _ensure_opus(): return False
+        audio=await _tts_bytes(text)
+        if not audio: return False
+        path=_tts_file(audio)
+        st=_music_of(guild.id)
+        gaana_tha=bool(vc.is_playing() or vc.is_paused() or st.get("current"))
+        try:
+            if vc.is_playing() or vc.is_paused():
+                vc.stop()
+                await asyncio.sleep(0.3)
+            done=asyncio.Event()
+            def _cb(e, done=done):
+                try: bot.loop.call_soon_threadsafe(done.set)
+                except Exception: pass
+            vc.play(discord.FFmpegPCMAudio(path, options="-vn"), after=_cb)
+            try: await asyncio.wait_for(done.wait(), timeout=90)
+            except Exception: pass
+        finally:
+            try: os.remove(path)
+            except Exception: pass
+        if gaana_tha and st.get("queue"):
+            try: asyncio.create_task(_play_next(guild))
+            except Exception: pass
+        return True
+    except Exception:
+        log.warning("speak_in_vc fail\n%s", traceback.format_exc())
+        return False
+
+class _WakeSink:
+    """VC ki awaaz sunne wala sink — per-user boli jama Karo, chup hone par kaat ke process karo.
+    discord.sinks.Sink ki tarah kaam karta hai (py-cord/discord.py dono)."""
+    def __init__(self, guild):
+        self.guild=guild
+        self.buffers: dict[int, bytearray] = {}
+        self.last_seen: dict[int, float] = {}
+        self.started=time.time()
+    def write(self, data, user):
+        try:
+            uid=getattr(user, "id", None) if not isinstance(user, int) else user
+            if uid is None or uid == bot.user.id: return
+            buf=self.buffers.setdefault(uid, bytearray())
+            buf.extend(data.data if hasattr(data, "data") else data)
+            self.last_seen[uid]=time.time()
+            if len(buf) > 48000 * 2 * 2 * 20:  # 20 sec se zyada ek saath na rakhe
+                del buf[:-48000 * 2 * 2 * 10]
+        except Exception:
+            pass
+    def cleanup(self):
+        self.buffers.clear(); self.last_seen.clear()
+    async def watcher(self):
+        """Chup ho jaye to boli ka tukda process karo (0.9 sec ki chuppi = baat khatm)."""
+        while _VOICE_LISTEN.get(self.guild.id):
+            await asyncio.sleep(0.25)
+            now=time.time()
+            for uid, last in list(self.last_seen.items()):
+                buf=self.buffers.get(uid)
+                if not buf: continue
+                dur=len(buf) / (48000 * 2 * 2)
+                if now - last >= 0.9 and dur >= 0.6:
+                    pcm=bytes(buf); self.buffers[uid]=bytearray(); self.last_seen.pop(uid, None)
+                    asyncio.create_task(_handle_voice_utterance(self.guild, uid, pcm))
+                elif dur <= 0.3 and now - last >= 3:
+                    self.buffers.pop(uid, None); self.last_seen.pop(uid, None)
+
+async def _vc_recording_done(sink, guild):
+    log.info("voice recording band hui guild %s", guild.id)
+
+def _start_listening(guild, channel_id: int):
+    vc=guild.voice_client
+    if vc is None: return False, "not_in_vc"
+    if not _ensure_opus(): return False, "opus_missing"
+    _VOICE_LISTEN[guild.id]=True
+    _VOICE_LISTEN_CH[guild.id]=channel_id
+    sink=_WakeSink(guild)
+    try:
+        vc.start_recording(sink, _vc_recording_done, guild)
+    except Exception:
+        log.warning("start_recording fail\n%s", traceback.format_exc())
+        _VOICE_LISTEN[guild.id]=False
+        return False, "recording_fail"
+    t=_vc_tasks.get(guild.id)
+    if not t or t.done():
+        _vc_tasks[guild.id]=asyncio.create_task(sink.watcher())
+    return True, "ok"
+
+def _stop_listening(guild):
+    _VOICE_LISTEN[guild.id]=False
+    try:
+        if guild.voice_client is not None:
+            guild.voice_client.stop_recording()
+    except Exception: pass
+    t=_vc_tasks.pop(guild.id, None)
+    if t: t.cancel()
+
+
 class MusicPanelView(discord.ui.View):
     """Music control panel — Now Playing message ke neeche lage button."""
     def __init__(self): super().__init__(timeout=None)
@@ -2459,6 +2639,32 @@ async def _song_autocomplete(interaction: discord.Interaction, current: str):
         return [app_commands.Choice(name=str(x)[:100], value=str(x)[:100]) for x in (data[1][:8] if len(data) > 1 else [])]
     except Exception:
         return []
+
+@bot.tree.command(name="vcchat", description="Nezuko ko bolo: naam leke bulaoge to VC me bolkar jawab degi")
+@app_commands.describe(action="On = sunna chalu Karo | Off = band | Status = state dekho")
+@app_commands.choices(action=[app_commands.Choice(name="On", value="on"), app_commands.Choice(name="Off", value="off"), app_commands.Choice(name="Status", value="status")])
+async def vcchat_cmd(interaction: discord.Interaction, action: str = "on"):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Ye server me hi chalega.", ephemeral=True); return
+    act=(action or "on").lower().strip()
+    guild=interaction.guild
+    if act == "status":
+        halat="ON 🎙️" if _VOICE_LISTEN.get(guild.id) else "OFF"
+        await interaction.response.send_message(f"🎧 Nezuko VC me sunn rahi hai: **{halat}**\n(On ho to bolo: **'Nezuko, kya kar rahi ho?'** — jawab awaaz me ayega!)", ephemeral=True); return
+    if act == "off":
+        _stop_listening(guild)
+        await interaction.response.send_message("🔇 Nezuko ne VC me sunna band kar diya.", ephemeral=True); return
+    vc=guild.voice_client
+    if vc is None:
+        await interaction.response.send_message("❌ Pehle Nezuko ko VC me bulao — khud VC join karke `/join` Karo, fir `/vcchat On`.", ephemeral=True); return
+    ok, wajah=_start_listening(guild, interaction.channel.id)
+    if ok:
+        await interaction.response.send_message("🎙️ **Nezuko sun rahi hai!** Ab VC me bolo:\n> **'Nezuko, kya Kar rahi ho?'**\nWo naam sunkar bolkar jawab degi 🌸\n_(Har baat se pehle naam lazmi lo; bina naam ke wo reply nahi karegi.)_")
+    elif wajah == "opus_missing":
+        await interaction.response.send_message("⚠️ Termux me `pkg install -y libopus opusfile` karke bot restart Karo, fir `/vcchat On` Karo.", ephemeral=True)
+    else:
+        await interaction.response.send_message("⚠️ Listening chalu nahi ho pai — bot restart karke fir `/vcchat On` try Karo (ya log me 'recording' wali line dekho).", ephemeral=True)
+
 
 @bot.tree.command(name="join", description="Nezuko ko apne voice channel me bulao")
 async def join_cmd(interaction: discord.Interaction):
