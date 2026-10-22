@@ -3722,7 +3722,13 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
             _mx=max((abs(v) for v in _vals), default=0)
         except Exception:
             _mx=0
-        log.info("VC awaaz level max=%s (0=chup, 1000+=halki, 8000+=saaf)", _mx)
+        _rms=0; _clip=0
+        try:
+            _n=max(1, len(_vals))
+            _rms=int((sum(v*v for v in _vals)/_n) ** 0.5)
+            _clip=sum(1 for v in _vals if abs(v) >= 32767) * 100 // _n
+        except Exception: pass
+        log.info("VC awaaz level max=%s rms=%s clip=%s%% (rms 300-4000=saaf boli, 10000+=shor/gadbad)", _mx, _rms, _clip)
         wav48=_pcm_to_wav_48k(pcm, 1)
         wav=_pcm_to_wav(pcm)
         if len(wav48) > 6_000_000: return
