@@ -3693,7 +3693,7 @@ def _stt_google_free(wav_bytes: bytes, quick: bool = False) -> str:
             return t
     return pehli
 
-_WAKE_WORDS=("nezuko", "Nezuko", "nezuku", "nezko", "nuzuko", "ne juko", "ne zuko", "Nezuko",
+_WAKE_WORDS=("nezuko", "Nezuko", "nezuku", "nezko", "nuzuko", "ne juko", "ne zuko", "Nezuko", "neetu", "neetoo", "neethu", "nitu", "nittu", "neetu ko", "nitu ko",
              "nezo", "Nezo", "ne zu", "nijuko", "mezuko", "nezukho", "nezu", "ne zu ko",
              "नेज़ुको", "नेजुको", "नेज़ुको", "नेजुको", "नेजको", "नेज़को",
              "नीतू", "नीटू", "नेजु", "नेजू", "नेजो", "नेज़ो", "नीजुको", "नेतुको")
