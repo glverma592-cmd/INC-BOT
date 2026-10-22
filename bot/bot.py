@@ -13,6 +13,13 @@ try:
     from discord.ext import voice_recv as _voice_recv
 except Exception:
     _voice_recv=None
+# Yeh library har sekand "unexpected rtcp packet" likhti hai — band Karo nahi to log ghul jayega
+try:
+    logging.getLogger("discord.ext.voice_recv.reader").setLevel(logging.CRITICAL)
+    logging.getLogger("discord.ext.voice_recv.gateway").setLevel(logging.WARNING)
+    logging.getLogger("discord.ext.voice_recv.router").setLevel(logging.WARNING)
+except Exception:
+    pass
 
 def _load_dotenv(path=None):
     # cwd/.env, bot/.env, repo-root/.env teeno jagah dhundho (hosting ke liye)
@@ -2215,7 +2222,7 @@ def _ensure_opus():
             discord.opus.load_opus(_lib)
         _LIBOPUS_OK[0]=True
     except Exception:
-        log.warning("opus load fail (voice bol nahi seetegi)\n%s", traceback.format_exc())
+        log.debug("opus load fail (voice bol nahi seetegi)")
         _LIBOPUS_OK[0]=False
     return _LIBOPUS_OK[0]
 try:
