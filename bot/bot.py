@@ -54,7 +54,7 @@ GITHUB_HOOK_SECRET=os.environ.get("GITHUB_HOOK_SECRET","")
 HTTP_PORT=int(os.environ.get("HTTP_PORT","8080"))
 VERIFY_ROLE_ID=int(os.environ.get("VERIFY_ROLE_ID","0") or 0)
 WELCOME_CHANNEL_ID=int(os.environ.get("WELCOME_CHANNEL_ID","0") or 0)
-DM_TEXT=os.environ.get("DM_TEXT","Hey {user} 👋\n\n**{guild}** me swagat hai!\n\n1. Pehle <#rules> padho\n2. Neeche **Verify** dabao\n3. Tabhi channels khulenge")
+DM_TEXT=os.environ.get("DM_TEXT","Hey {user} 👋 Welcome to **{guild}**! 🎉\n\nWe're happy to have you here.\n1. Please read the server rules\n2. If a **Verify** button appears below, tap it\n3. Then all the channels will open for you\n\nHave fun and enjoy your stay! 💖")
 REQUIRE_VERIFY=os.environ.get("REQUIRE_VERIFY","1")=="1"
 GEMINI_API_KEY=os.environ.get("GEMINI_API_KEY","")
 GEMINI_MODEL=os.environ.get("GEMINI_MODEL","gemini-3.5-flash-lite")
@@ -241,18 +241,18 @@ async def _send_auto_welcome(member) -> bool:
         if ch is None: return False
         rules_ch=next((c for c in guild.text_channels if "rule" in c.name.lower()), None)
         embed=discord.Embed(
-            title=f"🌸 {guild.name} me swagat hai!",
-            description=(f"Hey {member.mention}, **{guild.name}** ki family me tumhara dil se swagat hai! 💜\n\n"
-                         f"👥 Tum is server ke **#{guild.member_count}** member ho.\n"
-                         + (f"📜 Pehle {rules_ch.mention} padh lena.\n" if rules_ch is not None else "")
-                         + "💬 Koi help chahiye to chat me puch lo — aur `/help` se Nezu ke saare commands dekh sakte ho!"),
+            title=f"🌸 Welcome to {guild.name}!",
+            description=(f"Hey {member.mention}, a very warm welcome to the **{guild.name}** family! 💜\n\n"
+                         f"👥 You are member **#{guild.member_count}** of this server.\n"
+                         + (f"📜 Please take a moment to read {rules_ch.mention} first.\n" if rules_ch is not None else "")
+                         + "💬 Need any help? Just ask in chat — and type `/help` to see everything I can do!"),
             color=0xff6b9d)
         try: embed.set_thumbnail(url=member.display_avatar.url)
         except Exception: pass
         if guild.icon:
             try: embed.set_author(name=guild.name, icon_url=guild.icon.url)
             except Exception: pass
-        embed.set_footer(text="Nezu • Auto-Welcome (bina setup ke khud chalta hai)")
+        embed.set_footer(text="Nezu • Auto-Welcome (runs automatically, no setup needed)")
         await ch.send(content=f"🎉 Welcome {member.mention}!", embed=embed)
         log.info("auto-welcome -> %s in %s (#%s)", member, guild.name, ch.name)
         return True
@@ -3125,27 +3125,27 @@ async def server_verification(interaction: discord.Interaction):
     g=interaction.guild
     await interaction.response.send_message(f"🛡️ Verification level: **{str(g.verification_level).title()}** • Content filter: **{str(g.explicit_content_filter).title()}**", ephemeral=True)
 
-@server_group.command(name="welcome", description="Auto-welcome On/Off/Status (default: bina setup ke ON)")
-@app_commands.describe(action="On, Off ya Status")
+@server_group.command(name="welcome", description="Auto-welcome On/Off/Status (default: ON, no setup needed)")
+@app_commands.describe(action="On, Off or Status")
 @app_commands.choices(action=[
-    app_commands.Choice(name="On — auto welcome chalu", value="on"),
-    app_commands.Choice(name="Off — auto welcome band", value="off"),
-    app_commands.Choice(name="Status — halat dekho", value="status"),
+    app_commands.Choice(name="On — turn auto-welcome on", value="on"),
+    app_commands.Choice(name="Off — turn auto-welcome off", value="off"),
+    app_commands.Choice(name="Status — check status", value="status"),
 ])
 async def server_welcome(interaction: discord.Interaction, action: str = "status"):
     if interaction.guild is None:
-        await interaction.response.send_message("❌ Sirf server me chalta hai.", ephemeral=True); return
+        await interaction.response.send_message("❌ This only works inside a server.", ephemeral=True); return
     if action in ("on", "off") and not _is_admin(interaction):
-        await interaction.response.send_message("❌ Welcome On/Off sirf server **admins** kar sakte hai. (Waise ye default ON hi aata hai, kuch karne ki zaroorat nahi.)", ephemeral=True); return
+        await interaction.response.send_message("❌ Only server **admins** can turn welcome On/Off. (It is ON by default anyway, no setup needed.)", ephemeral=True); return
     if action == "on":
         _set_welcome(interaction.guild.id, True)
-        await interaction.response.send_message("🌸 **Auto-Welcome ON!** Ab har naye member ko apne aap welcome milega — koi aur setup nahi chahiye.", ephemeral=True)
+        await interaction.response.send_message("🌸 **Auto-Welcome ON!** Every new member will now be welcomed automatically — no setup needed.", ephemeral=True)
     elif action == "off":
         _set_welcome(interaction.guild.id, False)
-        await interaction.response.send_message("🌸 Auto-Welcome **OFF** kar diya hai is server ke liye.", ephemeral=True)
+        await interaction.response.send_message("🌸 Auto-Welcome has been turned **OFF** for this server.", ephemeral=True)
     else:
-        halat="ON ✅ (default — bina setup ke chalta hai)" if _welcome_enabled(interaction.guild.id) else "OFF"
-        await interaction.response.send_message(f"🌸 Auto-Welcome is server me: **{halat}**", ephemeral=True)
+        state="ON ✅ (default — runs automatically, no setup needed)" if _welcome_enabled(interaction.guild.id) else "OFF"
+        await interaction.response.send_message(f"🌸 Auto-Welcome in this server: **{state}**", ephemeral=True)
 
 @server_group.command(name="features", description="Server ki khaas features (community, partner wagera)")
 async def server_features(interaction: discord.Interaction):
