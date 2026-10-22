@@ -3516,6 +3516,14 @@ def _stereo_to_mono(pcm: bytes):
     mono=[]
     for i in range(0, len(vals), 2):
         mono.append((vals[i] + vals[i+1]) // 2)
+    # bohot tez awaaz (rms 5000+) ko halka Karo — phati hui awaaz STT nahi samajhta
+    try:
+        if mono:
+            _rms=(sum(v*v for v in mono)/len(mono)) ** 0.5
+            if _rms > 5000:
+                _f=3000.0/_rms
+                mono=[max(-32768, min(32767, int(v*_f))) for v in mono]
+    except Exception: pass
     return mono
 
 def _pcm_to_wav_48k(pcm: bytes, channels: int = 2) -> bytes:
@@ -3600,7 +3608,7 @@ async def _stt_gemini_once(wav_bytes: bytes) -> str:
         try:
             url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             async with _sess() as session:
-                async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=9)) as resp:
+                async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=18)) as resp:
                     txt=await resp.text()
                     if resp.status != 200:
                         log.warning("STT Gemini HTTP %s model %s body: %s", resp.status, model, txt[:200])
@@ -3623,8 +3631,8 @@ async def _stt_first_try(wav_bytes: bytes, wav48_bytes: bytes = b"") -> str:
         except Exception:
             log.warning("STT google fail\n%s", traceback.format_exc())
             return ""
-    tasks={asyncio.create_task(_google()): "google-free", asyncio.create_task(_stt_gemini_once(wav48_bytes or wav_bytes)): "gemini"}
-    deadline=time.time()+10
+    tasks={asyncio.create_task(_google()): "google-free", asyncio.create_task(_stt_gemini_once(wav_bytes)): "gemini"}
+    deadline=time.time()+20
     pending=set(tasks)
     try:
         while pending and time.time() < deadline:
@@ -3735,6 +3743,9 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
         wav=_pcm_to_wav(pcm)
         if len(wav48) > 6_000_000: return
         transcript=await _stt_first_try(wav, wav48)
+        if not transcript:
+            try: transcript=await _stt_gemini(wav)
+            except Exception: transcript=""
         log.info("VC STT time %.1fs", time.time()-_t0)
         if not transcript:
             log.warning("STT transcript empty (koi boli samjh nahi aayi)")
