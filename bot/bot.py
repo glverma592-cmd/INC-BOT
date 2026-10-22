@@ -2283,9 +2283,15 @@ async def join_cmd(interaction: discord.Interaction):
             vc=await voice.channel.connect()
         elif vc.channel != voice.channel:
             await vc.move_to(voice.channel)
-    except Exception:
+    except Exception as e:
         log.error("join connect fail\n%s", traceback.format_exc())
-        await interaction.response.send_message("⚠️ Nezuko VC join nahi kar payi — uski `Connect/Speak` permission check Karo.", ephemeral=True); return
+        if isinstance(e, RuntimeError) and ("PyNaCl" in str(e) or "davey" in str(e)):
+            await interaction.response.send_message("⚠️ Nezuko VC join nahi kar payi — Termux me **voice library (PyNaCl/davey) missing** hai, permission ki dikkat nahi hai. Admin ko batao, iska fix Termux se hoga.", ephemeral=True)
+        elif isinstance(e, discord.Forbidden):
+            await interaction.response.send_message("⚠️ Nezuko VC join nahi kar payi — is VC me uski `Connect/Speak` permission sach me band hai.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"⚠️ Nezuko VC join nahi kar payi — wajah: `{type(e).__name__}`. Admin ko batao.", ephemeral=True)
+        return
     await interaction.response.send_message(f"🎵 **Nezuko {voice.channel.name} me aa gayi!** Ab `/p gaane ka naam` do, wahi gaana chalega. Panel se skip/stop/autoplay control hoga.")
 
 @bot.tree.command(name="play", description="Play a song in your voice channel (search or YouTube link)")
@@ -2307,9 +2313,15 @@ async def play_cmd(interaction: discord.Interaction, song: str):
             vc=await voice.channel.connect()
         elif vc.channel != voice.channel:
             await vc.move_to(voice.channel)
-    except Exception:
+    except Exception as e:
         log.error("music connect fail\n%s", traceback.format_exc())
-        await lag.edit(content="⚠️ Voice channel join nahi kar payi — meri `Connect/Speak` permission check Karo."); return
+        if isinstance(e, RuntimeError) and ("PyNaCl" in str(e) or "davey" in str(e)):
+            await lag.edit(content="⚠️ Voice channel join nahi kar payi — Termux me **voice library (PyNaCl/davey) missing** hai, permission ki dikkat nahi hai.")
+        elif isinstance(e, discord.Forbidden):
+            await lag.edit(content="⚠️ Voice channel join nahi kar payi — is VC me meri `Connect/Speak` permission sach me band hai.")
+        else:
+            await lag.edit(content=f"⚠️ Voice channel join nahi kar payi — wajah: `{type(e).__name__}`")
+        return
     loop=asyncio.get_event_loop()
     try:
         track=await loop.run_in_executor(None, _yt_extract, song)
