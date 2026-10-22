@@ -2464,27 +2464,44 @@ _VOICE_LISTEN: dict[int, bool] = {}
 _VOICE_LISTEN_CH: dict[int, int] = {}
 _vc_tasks: dict[int, asyncio.Task] = {}
 _VC_COOLDOWN: dict[int, float] = {}
+_VC_PROCESSING: set = set()
 
-def _pcm_to_wav_48k(pcm: bytes, channels: int = 1) -> bytes:
-    """Awaaz ko jaisa-mila WAV banao (48k, koi kata-mar nahi) — Gemini STT ke liye."""
-    import io, wave
+def _stereo_to_mono(pcm: bytes):
+    """Discord opus decoder STEREO (2-channel, 48kHz) PCM deta hai.
+    Dono channel ko mila ke saaf mono banao — yahi asli awaaz hai."""
+    import struct as _st
     if len(pcm) % 2: pcm=pcm[:-1]
+    vals=_st.unpack("<%dh" % (len(pcm)//2), pcm)
+    if len(vals) % 2: vals=vals[:-1]
+    mono=[]
+    for i in range(0, len(vals), 2):
+        mono.append((vals[i] + vals[i+1]) // 2)
+    return mono
+
+def _pcm_to_wav_48k(pcm: bytes, channels: int = 2) -> bytes:
+    """Stereo awaaz ko mono 48k WAV banao (bina kata, bina slow kiye) — Gemini STT ke liye."""
+    import io, wave, struct as _st
+    try:
+        mono=_stereo_to_mono(pcm)
+        raw=_st.pack("<%dh" % len(mono), *mono)
+    except Exception:
+        raw=pcm
     bio=io.BytesIO()
     with wave.open(bio, "wb") as w:
-        w.setnchannels(max(1, min(2, channels))); w.setsampwidth(2); w.setframerate(48000)
-        w.writeframes(pcm)
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(48000)
+        w.writeframes(raw)
     return bio.getvalue()
 
 def _pcm_to_wav(pcm: bytes) -> bytes:
-    """Discord PCM (mono hone ki sabse zyada ummeed) ko 16kHz mono WAV me badlo.
-    Purani galti: mono ko stereo samajh ke aadhi awaaz feink dete the — isi se boli samajh nahi aati thi."""
+    """Stereo 48k awaaz -> mono 16kHz WAV (Google STT ke liye sahi speed/pitch)."""
     import io, wave, struct as _st
     try:
-        if len(pcm) % 2: pcm=pcm[:-1]
-        vals=_st.unpack("<%dh" % (len(pcm)//2), pcm)
-        # 48k mono -> 16k (har teesra sample)
-        rate_vals=vals[0::3]
-        raw=_st.pack("<%dh" % len(rate_vals), *rate_vals)
+        mono=_stereo_to_mono(pcm)
+        # 48k -> 16k: har 3 sample ka average (saaf downsample, speed/pitch sahi)
+        out=[]
+        for i in range(0, len(mono)-2, 3):
+            out.append((mono[i] + mono[i+1] + mono[i+2]) // 3)
+        raw=_st.pack("<%dh" % len(out), *out)
     except Exception:
         raw=pcm
     bio=io.BytesIO()
@@ -2530,38 +2547,44 @@ async def _stt_gemini(wav_bytes: bytes) -> str:
 
 
 async def _stt_gemini_once(wav_bytes: bytes) -> str:
-    """Gemini se awaaz ko ek tez try me samjho (race ke liye)."""
+    """Gemini se awaaz ko ek tez try me samjho (race ke liye).
+    Chalne wale models ek-ek try karo — purana dead model jawab rok raha tha."""
     if not GEMINI_API_KEY: return ""
     import base64 as _b64
     prompt=("Listen to this audio and transcribe EXACTLY what the person said, in whatever language they speak "
             "(Hindi, English, Bengali, Tamil, Japanese, Spanish — ANY language), in that same language and script. "
             "Return ONLY the transcript text.")
     payload={"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/wav", "data": _b64.b64encode(wav_bytes).decode()}}]}]}
-    try:
-        url="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=12)) as resp:
-                txt=await resp.text()
-                if resp.status != 200:
-                    log.warning("STT Gemini HTTP %s body: %s", resp.status, txt[:200])
-                    return ""
-                data=json.loads(txt)
-                return (data["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
-    except Exception:
-        log.warning("STT Gemini fail\n%s", traceback.format_exc())
-        return ""
+    for model in (GEMINI_MODEL, "gemini-flash-lite-latest", "gemini-3-flash-preview"):
+        if not model: continue
+        try:
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=9)) as resp:
+                    txt=await resp.text()
+                    if resp.status != 200:
+                        log.warning("STT Gemini HTTP %s model %s body: %s", resp.status, model, txt[:200])
+                        if resp.status in (401, 403): return ""  # key kharab — baaki model bhi fail honge
+                        continue
+                    data=json.loads(txt)
+                    t=(data["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
+                    if t: return t
+        except Exception:
+            log.warning("STT Gemini fail %s\n%s", model, traceback.format_exc())
+            continue
+    return ""
 
 async def _stt_first_try(wav_bytes: bytes, wav48_bytes: bytes = b"") -> str:
     """Awaaz samajhne ki race: Google-free aur Gemini dono ek saath —
     jo pehle sahi transcript de, wahi lo (tez + sahi)."""
     async def _google():
         try:
-            return await asyncio.get_event_loop().run_in_executor(None, _stt_google_free, wav_bytes)
+            return await asyncio.get_event_loop().run_in_executor(None, lambda: _stt_google_free(wav_bytes, quick=True))
         except Exception:
             log.warning("STT google fail\n%s", traceback.format_exc())
             return ""
     tasks={asyncio.create_task(_google()): "google-free", asyncio.create_task(_stt_gemini_once(wav48_bytes or wav_bytes)): "gemini"}
-    deadline=time.time()+16
+    deadline=time.time()+10
     pending=set(tasks)
     try:
         while pending and time.time() < deadline:
@@ -2578,7 +2601,7 @@ async def _stt_first_try(wav_bytes: bytes, wav48_bytes: bytes = b"") -> str:
         log.warning("STT race fail\n%s", traceback.format_exc())
     return ""
 
-def _stt_google_free(wav_bytes: bytes) -> str:
+def _stt_google_free(wav_bytes: bytes, quick: bool = False) -> str:
     """Fallback: SpeechRecognition + Google free STT (16kHz mono chahiye)."""
     import io as _io, wave as _wv
     src=_wv.open(_io.BytesIO(wav_bytes), "rb")
@@ -2603,6 +2626,15 @@ def _stt_google_free(wav_bytes: bytes) -> str:
     with _sr.AudioFile(_io.BytesIO(bio.getvalue())) as source:
         audio=rec.record(source)
     pehli=""
+    if quick:
+        # Race wala tez rasta: sabse aam 3 bhashaye, pehli mili transcript = jawab (36 bhashaon wala intezaar khatm)
+        for lang in ("hi-IN", "en-IN", "en-US"):
+            try:
+                t=rec.recognize_google(audio, language=lang)
+            except Exception:
+                continue
+            if t: return t
+        return ""
     for lang in ("hi-IN", "en-IN", "en-US", "mr-IN", "bn-IN", "ta-IN", "te-IN",
                  "kn-IN", "ml-IN", "gu-IN", "pa-IN", "ur-IN", "es-ES", "fr-FR",
                  "de-DE", "pt-BR", "it-IT", "nl-NL", "ru-RU", "ja-JP", "ko-KR",
@@ -2620,7 +2652,9 @@ def _stt_google_free(wav_bytes: bytes) -> str:
     return pehli
 
 _WAKE_WORDS=("nezuko", "Nezuko", "nezuku", "nezko", "nuzuko", "ne juko", "ne zuko", "Nezuko",
-             "नेज़ुको", "नेजुको", "नेज़ुको", "नेजुको", "नेजको", "नेज़को")
+             "nezo", "Nezo", "ne zu", "nijuko", "mezuko", "nezukho",
+             "नेज़ुको", "नेजुको", "नेज़ुको", "नेजुको", "नेजको", "नेज़को",
+             "नीतू", "नीटू", "नेजु", "नेजू", "नेजो", "नेज़ो", "नीजुको", "नेतुको")
 _WAKE_PATTERN="|".join(sorted((re.escape(w) for w in _WAKE_WORDS), key=len, reverse=True))
 _VC_CONVO: dict[tuple[int, int], float] = {}
 def _find_wake(transcript: str) -> bool:
@@ -2634,6 +2668,10 @@ def _find_wake(transcript: str) -> bool:
     return False
 async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
     """Ek bandi hui boli process Karo: wake word -> sawal -> jawab -> VC me bol do."""
+    _pkey=(guild.id, user_id)
+    if _pkey in _VC_PROCESSING: return
+    _VC_PROCESSING.add(_pkey)
+    _t0=time.time()
     try:
         if not _VOICE_LISTEN.get(guild.id): return
         now=time.time()
@@ -2649,6 +2687,7 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
         wav=_pcm_to_wav(pcm)
         if len(wav48) > 6_000_000: return
         transcript=await _stt_first_try(wav, wav48)
+        log.info("VC STT time %.1fs", time.time()-_t0)
         if not transcript:
             log.warning("STT transcript empty (koi boli samjh nahi aayi)")
             return
@@ -2668,8 +2707,10 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
         ch=None
         chid=_VOICE_LISTEN_CH.get(guild.id)
         if chid:
-            try: ch=await bot.fetch_channel(chid)
-            except Exception: ch=None
+            ch=bot.get_channel(chid)
+            if ch is None:
+                try: ch=await bot.fetch_channel(chid)
+                except Exception: ch=None
         if not sawal or len(sawal) < 2:
             jawab="Haa bolo, mai sun rahi hu! 🌸"
         else:
@@ -2680,7 +2721,11 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
             naam=member.display_name if member else "friend"
             prompt_vc=(f"{naam} tumse VC me ek dost ki tarah baat kar raha hai. Usne kaha: {sawal[:1200]}. "
                        "bilkul naturally, jaise asli dost jawab deti hai — bohut chhota (1-2 vakya, max 40 shabd), user ki bhasha me hi.")
-            jawab=await _ask_ai_fast(prompt_vc, hist, timeout=13)
+            try:
+                jawab=await asyncio.wait_for(_ask_ai_fast(prompt_vc, hist, timeout=10), timeout=12)
+            except Exception:
+                jawab=""
+            log.info("VC AI time kul %.1fs", time.time()-_t0)
             if not jawab or jawab.startswith("⚠️"):
                 jawab="Hmm, ek second ruko... kuch atak gaya, ek baar fir bolo na? 🌸"
             hist += [{"role": "user", "parts": [{"text": sawal[:1500]}]}, {"role": "model", "parts": [{"text": jawab[:1500]}]}]
@@ -2691,8 +2736,10 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
         await _speak_in_vc(guild, jawab)
     except Exception:
         log.warning("voice utterance handle fail\n%s", traceback.format_exc())
+    finally:
+        _VC_PROCESSING.discard(_pkey)
 
-async def _speak_in_vc(guild, text: str) -> bool:
+async def _speak_in_vc_asli(guild, text: str) -> bool:
     """VC me bol do (gaana baj raha ho to rok ke bolti hu, fir queue se fir chalega)."""
     try:
         vc=guild.voice_client
@@ -2724,6 +2771,13 @@ async def _speak_in_vc(guild, text: str) -> bool:
     except Exception:
         log.warning("speak_in_vc fail\n%s", traceback.format_exc())
         return False
+
+_VC_SPEAK_LOCKS: dict[int, asyncio.Lock] = {}
+async def _speak_in_vc(guild, text: str) -> bool:
+    """Ek guild me ek time par sirf ek hi boli chalegi — jawab takrayenge nahi."""
+    lock=_VC_SPEAK_LOCKS.setdefault(guild.id, asyncio.Lock())
+    async with lock:
+        return await _speak_in_vc_asli(guild, text)
 
 class _WakeSink(_voice_recv.AudioSink if _voice_recv is not None else object):
     """VC ki awaaz sunne wala sink (discord-ext-voice-recv) — per-user boli jama Karo,
@@ -2785,7 +2839,7 @@ class _WakeSink(_voice_recv.AudioSink if _voice_recv is not None else object):
                 buf=self.buffers.get(uid)
                 if not buf: continue
                 dur=len(buf) / (48000 * 2 * 2)
-                if now - last >= 0.9 and dur >= 0.6:
+                if now - last >= 0.7 and dur >= 0.5:
                     pcm=bytes(buf); self.buffers[uid]=bytearray(); self.last_seen.pop(uid, None)
                     log.info("VC boli mili user %s (%.1f sec ki awaaz)", uid, dur)
                     asyncio.create_task(_handle_voice_utterance(self.guild, uid, pcm))
