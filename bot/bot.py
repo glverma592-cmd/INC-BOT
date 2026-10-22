@@ -2657,6 +2657,421 @@ async def purge_cmd(interaction: discord.Interaction, member: discord.Member, am
         await interaction.followup.send("⚠️ Delete nahi ho paya — 14 din se purane messages Discord bulk-delete nahi karne deta, ya permission nahi hai.", ephemeral=True)
 
 
+# ---------------- EXTRA GROUPS: 56 SUBCOMMANDS (Discord 100 limit ke andar) ----------------
+# Discord Ek bot ko max 100 top-level slash commands deta hai — isliye naye
+# features group-commands ke andar subcommands bana ke jode hai.
+tools_group=app_commands.Group(name="tools", description="Utility tools: time, ID, encode, convert aur random")
+text_group=app_commands.Group(name="text", description="Text tools: ulta, bada-chhota, ginna, spoiler wagera")
+actions_group=app_commands.Group(name="actions", description="Fun actions: hug, pat, wave, dance wagera")
+server_group=app_commands.Group(name="server", description="Server ki gehri jankari: stats, emojis, boosts wagera")
+games_group=app_commands.Group(name="games", description="Chhote games: trivia, riddle, scramble, math, slots wagera")
+
+# ---------- /tools (11) ----------
+@tools_group.command(name="timestamp", description="Abhi se kitne minute baad ka Discord time-code banao")
+@app_commands.describe(minutes="Abhi se kitne minute baad (minus = peeche)")
+async def tools_timestamp(interaction: discord.Interaction, minutes: app_commands.Range[int, -100000, 100000] = 0):
+    ts=int(time.time()) + minutes*60
+    await interaction.response.send_message(f"🕒 <t:{ts}:F>\nCode: `<t:{ts}:F>` • Relative: `<t:{ts}:R>`", ephemeral=True)
+
+@tools_group.command(name="snowflake", description="Discord ID se uski date/time nikalo")
+@app_commands.describe(user_id="Discord ID (user/channel/message koi bhi)")
+async def tools_snowflake(interaction: discord.Interaction, user_id: str):
+    try: dt=discord.utils.snowflake_time(int(str(user_id).strip()))
+    except Exception:
+        await interaction.response.send_message("❌ Sahi numeric ID do.", ephemeral=True); return
+    await interaction.response.send_message(f"❄️ ID `{user_id}` bana tha: **{dt.strftime('%d %b %Y, %H:%M UTC')}** (<t:{int(dt.timestamp())}:R>)", ephemeral=True)
+
+@tools_group.command(name="uuid", description="Ek random unique ID (UUID) banao")
+async def tools_uuid(interaction: discord.Interaction):
+    import uuid as _uuid
+    await interaction.response.send_message(f"🆔 `{_uuid.uuid4()}`", ephemeral=True)
+
+@tools_group.command(name="random", description="Do numbers ke beech random number")
+@app_commands.describe(minimum="Chhota number", maximum="Bada number")
+async def tools_random(interaction: discord.Interaction, minimum: int = 1, maximum: int = 100):
+    if maximum < minimum:
+        await interaction.response.send_message("❌ Maximum, minimum se bada hona chahiye.", ephemeral=True); return
+    await interaction.response.send_message(f"🎲 Random number ({minimum}–{maximum}): **{random.randint(minimum, maximum)}**")
+
+@tools_group.command(name="b64encode", description="Text ko Base64 me badlo")
+@app_commands.describe(text="Konsa text encode karna hai")
+async def tools_b64e(interaction: discord.Interaction, text: str):
+    import base64 as _b64
+    out=_b64.b64encode(text.encode()).decode()
+    await interaction.response.send_message(f"🔐 `{out[:1800]}`", ephemeral=True)
+
+@tools_group.command(name="b64decode", description="Base64 ko wapas text me badlo")
+@app_commands.describe(text="Base64 text")
+async def tools_b64d(interaction: discord.Interaction, text: str):
+    import base64 as _b64
+    try: out=_b64.b64decode(text.encode()).decode("utf-8", "replace")
+    except Exception:
+        await interaction.response.send_message("❌ Ye sahi Base64 nahi hai.", ephemeral=True); return
+    await interaction.response.send_message(f"🔓 `{out[:1800]}`", ephemeral=True)
+
+@tools_group.command(name="sha256", description="Text ka SHA-256 hash banao")
+@app_commands.describe(text="Konsa text hash karna hai")
+async def tools_sha(interaction: discord.Interaction, text: str):
+    import hashlib as _hl
+    await interaction.response.send_message(f"#️⃣ `{_hl.sha256(text.encode()).hexdigest()}`", ephemeral=True)
+
+@tools_group.command(name="binary", description="Text ko binary (0-1) me badlo")
+@app_commands.describe(text="Text (max 100 characters)")
+async def tools_binary(interaction: discord.Interaction, text: str):
+    out=" ".join(format(ord(c), "08b") for c in text[:100])
+    await interaction.response.send_message(f"💻 `{out[:1800]}`", ephemeral=True)
+
+@tools_group.command(name="hex", description="Text ko hex code me badlo")
+@app_commands.describe(text="Text (max 200 characters)")
+async def tools_hex(interaction: discord.Interaction, text: str):
+    await interaction.response.send_message(f"🔢 `{text[:200].encode().hex()[:1800]}`", ephemeral=True)
+
+@tools_group.command(name="unit", description="Units convert Karo: km, kg, temperature wagera")
+@app_commands.describe(kind="Konsa conversion", value="Kitna")
+@app_commands.choices(kind=[
+    app_commands.Choice(name="Kilometre → Miles", value="km_mi"),
+    app_commands.Choice(name="Miles → Kilometre", value="mi_km"),
+    app_commands.Choice(name="Kg → Pounds", value="kg_lb"),
+    app_commands.Choice(name="Pounds → Kg", value="lb_kg"),
+    app_commands.Choice(name="°C → °F", value="c_f"),
+    app_commands.Choice(name="°F → °C", value="f_c"),
+    app_commands.Choice(name="Metre → Feet", value="m_ft"),
+    app_commands.Choice(name="Feet → Metre", value="ft_m"),
+])
+async def tools_unit(interaction: discord.Interaction, kind: app_commands.Choice[str], value: float):
+    table={"km_mi": (value*0.621371, "miles"), "mi_km": (value*1.60934, "km"), "kg_lb": (value*2.20462, "pounds"),
+           "lb_kg": (value*0.453592, "kg"), "c_f": (value*9/5+32, "°F"), "f_c": ((value-32)*5/9, "°C"),
+           "m_ft": (value*3.28084, "feet"), "ft_m": (value*0.3048, "metre")}
+    result, unit=table[kind.value]
+    await interaction.response.send_message(f"📏 **{value}** → **{result:.2f} {unit}**")
+
+@tools_group.command(name="coinamount", description="Coins ko words me: kitne coins ka matlab")
+@app_commands.describe(amount="Kitne coins")
+async def tools_coinamount(interaction: discord.Interaction, amount: app_commands.Range[int, 0, 1000000000]):
+    await interaction.response.send_message(f"🪙 **{amount:,}** coins" + (" — lakhpati! 🎉" if amount >= 100000 else " — badhte raho! 💪"), ephemeral=True)
+
+# ---------- /text (10) ----------
+@text_group.command(name="reverse", description="Text ulta Karo")
+@app_commands.describe(text="Konsa text")
+async def text_reverse(interaction: discord.Interaction, text: str):
+    await interaction.response.send_message(text[:500][::-1])
+
+@text_group.command(name="upper", description="Text ko BADI (capital) letters me")
+@app_commands.describe(text="Konsa text")
+async def text_upper(interaction: discord.Interaction, text: str):
+    await interaction.response.send_message(text[:1000].upper())
+
+@text_group.command(name="lower", description="Text ko chhoti letters me")
+@app_commands.describe(text="Konsa text")
+async def text_lower(interaction: discord.Interaction, text: str):
+    await interaction.response.send_message(text[:1000].lower())
+
+@text_group.command(name="title", description="Har shabd ka pehla letter bada")
+@app_commands.describe(text="Konsa text")
+async def text_title(interaction: discord.Interaction, text: str):
+    await interaction.response.send_message(text[:1000].title())
+
+@text_group.command(name="count", description="Text me letters, shabd aur lines ginno")
+@app_commands.describe(text="Konsa text ginna hai")
+async def text_count(interaction: discord.Interaction, text: str):
+    await interaction.response.send_message(f"🔢 Letters: **{len(text)}** • Shabd: **{len(text.split())}** • Lines: **{len(text.splitlines()) or 1}**", ephemeral=True)
+
+@text_group.command(name="repeat", description="Text ko baar-baar likho")
+@app_commands.describe(text="Konsa text", times="Kitni baar (1-10)")
+async def text_repeat(interaction: discord.Interaction, text: str, times: app_commands.Range[int, 1, 10] = 3):
+    await interaction.response.send_message((text[:200] + "\n") * times)
+
+@text_group.command(name="spoiler", description="Text ko spoiler (chhupa hua) bana ke bhejo")
+@app_commands.describe(text="Konsa text chhupana hai")
+async def text_spoiler(interaction: discord.Interaction, text: str):
+    await interaction.response.send_message(f"||{text[:500]}||")
+
+@text_group.command(name="mock", description="Text ko aLtErNaTiNg case me (fun)")
+@app_commands.describe(text="Konsa text")
+async def text_mock(interaction: discord.Interaction, text: str):
+    out="".join(c.upper() if i % 2 == 0 else c.lower() for i, c in enumerate(text[:500]))
+    await interaction.response.send_message(out)
+
+@text_group.command(name="vowels", description="Text me vowels (a,e,i,o,u) ginno")
+@app_commands.describe(text="Konsa text")
+async def text_vowels(interaction: discord.Interaction, text: str):
+    low=text.lower(); ginti={v: low.count(v) for v in "aeiou"}
+    await interaction.response.send_message("🔤 " + " • ".join(f"**{v}**: {n}" for v, n in ginti.items()) + f"\nKul vowels: **{sum(ginti.values())}**", ephemeral=True)
+
+@text_group.command(name="slug", description="Text ko link-jaisa slug banao (hello-world type)")
+@app_commands.describe(text="Konsa text")
+async def text_slug(interaction: discord.Interaction, text: str):
+    slug=re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:200]
+    await interaction.response.send_message(f"🔗 `{slug or 'khali'}`", ephemeral=True)
+
+# ---------- /actions (12, factory se) ----------
+def _reg_action(naam, emoji, line):
+    @actions_group.command(name=naam, description=f"{emoji} Kisi member ke saath {naam} fun action")
+    @app_commands.describe(member="Kis member ke saath (khali = khud)")
+    async def _act(interaction: discord.Interaction, member: discord.Member = None):
+        target=member or interaction.user
+        await interaction.response.send_message(f"{emoji} {interaction.user.mention} → {target.mention}: **{line}**")
+    return _act
+for _an, _ae, _al in [
+    ("hug", "🤗", "ek pyaari si jhappi di!"), ("pat", "🫳", "pyaar se sar sehlaya!"), ("slap", "👋", "halki si mazak wali chapat! (fun only)"),
+    ("wave", "👋", "wave kiya — hello!"), ("highfive", "🙌", "zordar high-five diya!"), ("dance", "💃", "saath me dance shuru kar diya!"),
+    ("cry", "😢", "rone ka natak kiya!"), ("laugh", "😂", "zor-zor se hasne laga!"), ("angry", "😤", "gussa hone ka natak kiya!"),
+    ("sleep", "😴", "sone chala gaya — good night!"), ("eat", "🍔", "saath khana khane baith gaya!"), ("thumbsup", "👍", "thumbs up diya — badhiya kaam!"),
+]:
+    _reg_action(_an, _ae, _al)
+
+# ---------- /server (12) ----------
+def _server_lazmi(interaction):
+    return interaction.guild is not None
+
+@server_group.command(name="stats", description="Server ke kul numbers: members, bots, channels")
+async def server_stats(interaction: discord.Interaction):
+    if not _server_lazmi(interaction):
+        await interaction.response.send_message("❌ Sirf server me chalta hai.", ephemeral=True); return
+    g=interaction.guild
+    humans=sum(1 for m in g.members if not m.bot); bots=len(g.members) - humans
+    embed=discord.Embed(title=f"📊 {g.name} ke Stats", color=0x3498db)
+    embed.add_field(name="👥 Members", value=f"{g.member_count}", inline=True)
+    embed.add_field(name="🧑 Humans", value=f"{humans}", inline=True)
+    embed.add_field(name="🤖 Bots", value=f"{bots}", inline=True)
+    embed.add_field(name="💬 Text Channels", value=f"{len(g.text_channels)}", inline=True)
+    embed.add_field(name="🔊 Voice Channels", value=f"{len(g.voice_channels)}", inline=True)
+    embed.add_field(name="🎭 Roles", value=f"{len(g.roles)}", inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@server_group.command(name="icon", description="Server ki icon/photo bade me dekho")
+async def server_icon(interaction: discord.Interaction):
+    if not _server_lazmi(interaction):
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    if interaction.guild.icon:
+        embed=discord.Embed(title=f"🖼️ {interaction.guild.name} ki Icon", color=0x9b59b6)
+        embed.set_image(url=interaction.guild.icon.url)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        await interaction.response.send_message("ℹ️ Is server ki koi icon nahi hai.", ephemeral=True)
+
+@server_group.command(name="serverbanner", description="Server ka banner dekho (agar hai)")
+async def server_banner(interaction: discord.Interaction):
+    if not _server_lazmi(interaction):
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    banner=getattr(interaction.guild, "banner", None)
+    if banner:
+        embed=discord.Embed(title=f"🖼️ {interaction.guild.name} ka Banner", color=0x9b59b6)
+        embed.set_image(url=banner.url)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        await interaction.response.send_message("ℹ️ Is server ka banner nahi hai (boost level chahiye hota hai).", ephemeral=True)
+
+@server_group.command(name="emojis", description="Server ke custom emojis ki list")
+async def server_emojis(interaction: discord.Interaction):
+    if not _server_lazmi(interaction):
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    emojis=list(interaction.guild.emojis)
+    if not emojis:
+        await interaction.response.send_message("ℹ️ Is server me custom emoji nahi hai.", ephemeral=True); return
+    txt=" ".join(str(e) for e in emojis[:40])
+    await interaction.response.send_message(f"😀 **{len(emojis)} custom emojis:**\n{txt}"[:1900], ephemeral=True)
+
+@server_group.command(name="rolescount", description="Server me kul kitne roles hai, sabse upar wala Konsa")
+async def server_rolescount(interaction: discord.Interaction):
+    if not _server_lazmi(interaction):
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    g=interaction.guild
+    top=max(g.roles, key=lambda r: r.position)
+    await interaction.response.send_message(f"🎭 **{g.name}** me kul **{len(g.roles)} roles** hai.\nSabse upar ka role: {top.mention}", ephemeral=True)
+
+@server_group.command(name="channels", description="Server ke saare channels ki ginati aur list (pehle 30)")
+async def server_channels(interaction: discord.Interaction):
+    if not _server_lazmi(interaction):
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    g=interaction.guild
+    names=[f"#{c.name}" for c in g.text_channels[:30]]
+    await interaction.response.send_message(f"📺 Kul channels: **{len(g.channels)}** (text {len(g.text_channels)}, voice {len(g.voice_channels)}, category {len(g.categories)})\n" + ", ".join(names), ephemeral=True)
+
+@server_group.command(name="boosts", description="Server ke boosts aur boost level")
+async def server_boosts(interaction: discord.Interaction):
+    if not _server_lazmi(interaction):
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    g=interaction.guild
+    await interaction.response.send_message(f"🚀 **{g.name}** — Boost Level: **{g.premium_tier}** • Kul boosts: **{g.premium_subscription_count or 0}**", ephemeral=True)
+
+@server_group.command(name="owner", description="Server ka owner Konsa hai")
+async def server_owner(interaction: discord.Interaction):
+    if not _server_lazmi(interaction):
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    await interaction.response.send_message(f"👑 **{interaction.guild.name}** ka owner: <@{interaction.guild.owner_id}> (`{interaction.guild.owner_id}`)", ephemeral=True)
+
+@server_group.command(name="created", description="Server kab bana tha")
+async def server_created(interaction: discord.Interaction):
+    if not _server_lazmi(interaction):
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    dt=interaction.guild.created_at
+    await interaction.response.send_message(f"🎂 **{interaction.guild.name}** bana tha: **{dt.strftime('%d %b %Y')}** (<t:{int(dt.timestamp())}:R>)", ephemeral=True)
+
+@server_group.command(name="afk", description="Server ka AFK channel aur timeout")
+async def server_afk(interaction: discord.Interaction):
+    if not _server_lazmi(interaction):
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    g=interaction.guild
+    ch=g.afk_channel.mention if g.afk_channel else "set nahi hai"
+    await interaction.response.send_message(f"💤 AFK channel: **{ch}** • AFK timeout: **{g.afk_timeout} second**", ephemeral=True)
+
+@server_group.command(name="verification", description="Server ka verification level aur content filter")
+async def server_verification(interaction: discord.Interaction):
+    if not _server_lazmi(interaction):
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    g=interaction.guild
+    await interaction.response.send_message(f"🛡️ Verification level: **{str(g.verification_level).title()}** • Content filter: **{str(g.explicit_content_filter).title()}**", ephemeral=True)
+
+@server_group.command(name="features", description="Server ki khaas features (community, partner wagera)")
+async def server_features(interaction: discord.Interaction):
+    if not _server_lazmi(interaction):
+        await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
+    feats=interaction.guild.features
+    txt=", ".join(f"`{f}`" for f in feats) if feats else "koi khaas feature nahi"
+    await interaction.response.send_message(f"✨ **Features:** {txt}"[:1900], ephemeral=True)
+
+# ---------- /games (11) ----------
+_game_state: dict = {}
+_TRIVIA=[
+    ("India ki capital kya hai?", ["Mumbai", "Delhi", "Kolkata", " Chennai".strip()], "b"),
+    ("Sabse bada planet Konsa hai?", [" earth".strip().title(), "Jupiter", "Mars", "Venus"], "b"),
+    ("Paani ka formula kya hai?", ["CO2", "O2", "H2O", "NaCl"], "c"),
+    ("Taj Mahal kaha hai?", ["Delhi", "Jaipur", "Agra", "Lucknow"], "c"),
+    ("Computer ka dimag kise kehte hai?", ["RAM", "CPU", "Monitor", "Mouse"], "b"),
+    ("1 ghante me kitne second hote hai?", ["3600", "600", "360", "6000"], "a"),
+    ("Rainbow me kitne rang hote hai?", ["5", "6", "7", "8"], "c"),
+    ("India ka rashtriya khel (lokpriya rup se) Konsa mana jata hai?", ["Cricket", "Hockey", "Football", "Kabaddi"], "b"),
+]
+_RIDDLES=[
+    ("Mai chalta hu bina pair ke, rota hu bina aankh ke. Mai kya hu?", ["badal", "cloud"]),
+    ("Jitna zyada lete ho, utna bada hota hai. Kya hai?", ["gadda", "khadda", "gadha", "hole"]),
+    ("Mere paas sheher hai par ghar nahi, jangal hai par ped nahi. Mai kya hu?", ["map", "naksha"]),
+]
+_SCRAMBLE_WORDS=["nezuko", "discord", "gaming", "python", "dost", "music", "server", "cricket", "mobile", "duniya"]
+
+@games_group.command(name="trivia", description="Ek sawal milega — /games trivia_answer se jawab do")
+async def games_trivia(interaction: discord.Interaction):
+    q, opts, sahi=_TRIVIA[random.randrange(len(_TRIVIA))]
+    _game_state[interaction.user.id]={"type": "trivia", "answer": sahi}
+    lines="\n".join(f"**{chr(97+i)}.** {o}" for i, o in enumerate(opts))
+    await interaction.response.send_message(f"🧠 **Trivia:** {q}\n{lines}\n\nJawab `/games trivia_answer` se do!")
+
+@games_group.command(name="trivia_answer", description="Trivia ka jawab do")
+@app_commands.describe(choice="a, b, c ya d")
+@app_commands.choices(choice=[app_commands.Choice(name=x, value=x) for x in ("a", "b", "c", "d")])
+async def games_trivia_answer(interaction: discord.Interaction, choice: app_commands.Choice[str]):
+    rec=_game_state.get(interaction.user.id)
+    if not rec or rec.get("type") != "trivia":
+        await interaction.response.send_message("ℹ️ Pehle `/games trivia` se sawal lo.", ephemeral=True); return
+    _game_state.pop(interaction.user.id, None)
+    if choice.value == rec["answer"]:
+        await interaction.response.send_message(f"🎉 **Sahi jawab, {interaction.user.mention}!** Tum jeet gaye!")
+    else:
+        await interaction.response.send_message(f"❌ Galat! Sahi jawab **{rec['answer']}** tha. Fir try Karo!")
+
+@games_group.command(name="riddle", description="Ek paheli milegi — /games riddle_answer se jawab do")
+async def games_riddle(interaction: discord.Interaction):
+    q, kabul=_RIDDLES[random.randrange(len(_RIDDLES))]
+    _game_state[interaction.user.id]={"type": "riddle", "answers": kabul}
+    await interaction.response.send_message(f"🕵️ **Paheli:** {q}\n\nJawab `/games riddle_answer` se do!")
+
+@games_group.command(name="riddle_answer", description="Paheli ka jawab do")
+@app_commands.describe(answer="Tumhara jawab")
+async def games_riddle_answer(interaction: discord.Interaction, answer: str):
+    rec=_game_state.get(interaction.user.id)
+    if not rec or rec.get("type") != "riddle":
+        await interaction.response.send_message("ℹ️ Pehle `/games riddle` lo.", ephemeral=True); return
+    _game_state.pop(interaction.user.id, None)
+    if answer.strip().lower() in rec["answers"]:
+        await interaction.response.send_message(f"🎉 **Sahi pakde hai, {interaction.user.mention}!**")
+    else:
+        await interaction.response.send_message(f"❌ Nahi! Jawab tha: **{rec['answers'][0]}**")
+
+@games_group.command(name="scramble", description="Ulta-phulta shabd milega — sahi shabd bano, /games scramble_guess")
+async def games_scramble(interaction: discord.Interaction):
+    shabd=_SCRAMBLE_WORDS[random.randrange(len(_SCRAMBLE_WORDS))]
+    ulta=list(shabd); random.shuffle(ulta); ulta="".join(ulta)
+    if ulta == shabd: ulta=shabd[::-1]
+    _game_state[interaction.user.id]={"type": "scramble", "answer": shabd}
+    await interaction.response.send_message(f"🔤 **Scramble:** `{ulta}`\nSahi shabd `/games scramble_guess` se batao!")
+
+@games_group.command(name="scramble_guess", description="Scramble ka sahi shabd batao")
+@app_commands.describe(word="Sahi shabd")
+async def games_scramble_guess(interaction: discord.Interaction, word: str):
+    rec=_game_state.get(interaction.user.id)
+    if not rec or rec.get("type") != "scramble":
+        await interaction.response.send_message("ℹ️ Pehle `/games scramble` lo.", ephemeral=True); return
+    if word.strip().lower() == rec["answer"]:
+        _game_state.pop(interaction.user.id, None)
+        await interaction.response.send_message(f"🎉 **Sahi!** Shabd tha: **{rec['answer']}**")
+    else:
+        await interaction.response.send_message("❌ Galat — fir try Karo! (game chal raha hai)")
+
+@games_group.command(name="mathquiz", description="Maths ka sawal — /games math_answer se jawab")
+async def games_mathquiz(interaction: discord.Interaction):
+    a, b=random.randint(2, 50), random.randint(2, 30)
+    op=random.choice(["+", "-", "*"])
+    sahi={"+" : a+b, "-": a-b, "*": a*b}[op]
+    _game_state[interaction.user.id]={"type": "math", "answer": sahi}
+    await interaction.response.send_message(f"➗ **Math Quiz:** {a} {op} {b} = ?\nJawab `/games math_answer` se do!")
+
+@games_group.command(name="math_answer", description="Math quiz ka jawab (number)")
+@app_commands.describe(answer="Tumhara number wala jawab")
+async def games_math_answer(interaction: discord.Interaction, answer: int):
+    rec=_game_state.get(interaction.user.id)
+    if not rec or rec.get("type") != "math":
+        await interaction.response.send_message("ℹ️ Pehle `/games mathquiz` lo.", ephemeral=True); return
+    _game_state.pop(interaction.user.id, None)
+    if answer == rec["answer"]:
+        await interaction.response.send_message(f"🎉 **Bilkul sahi, {interaction.user.mention}!**")
+    else:
+        await interaction.response.send_message(f"❌ Galat! Sahi jawab **{rec['answer']}** tha.")
+
+@games_group.command(name="numberguess", description="1-100 ke beech number socha hai — /games guess se dhundho")
+async def games_numberguess(interaction: discord.Interaction):
+    _game_state[interaction.user.id]={"type": "number", "answer": random.randint(1, 100), "tries": 0}
+    await interaction.response.send_message(f"🎯 {interaction.user.mention} Maine **1-100** ke beech Ek number socha hai! `/games guess` se dhundho!")
+
+@games_group.command(name="guess", description="Number guess Karo")
+@app_commands.describe(number="Tumhara guess (1-100)")
+async def games_guess(interaction: discord.Interaction, number: app_commands.Range[int, 1, 100]):
+    rec=_game_state.get(interaction.user.id)
+    if not rec or rec.get("type") != "number":
+        await interaction.response.send_message("ℹ️ Pehle `/games numberguess` shuru Karo.", ephemeral=True); return
+    rec["tries"]+=1
+    if number == rec["answer"]:
+        tries=rec["tries"]; _game_state.pop(interaction.user.id, None)
+        await interaction.response.send_message(f"🎉 **Mil gaya!** Number **{number}** tha — {tries} koshish me dhundh liya!")
+    elif number < rec["answer"]:
+        await interaction.response.send_message("⬆️ Isse **bada** hai! Fir guess Karo.")
+    else:
+        await interaction.response.send_message("⬇️ Isse **chhota** hai! Fir guess Karo.")
+
+@games_group.command(name="slots", description="Economy coins se slot machine (triple = 5x munafa)")
+@app_commands.describe(amount="Kitne coins lagane hai (min 10)")
+async def games_slots(interaction: discord.Interaction, amount: app_commands.Range[int, 10, 100000] = 10):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Slots sirf server me chalta hai.", ephemeral=True); return
+    rec=_eco_rec(interaction.guild.id, interaction.user.id)
+    bal=int(rec.get("coins", 0))
+    if bal < amount:
+        await interaction.response.send_message(f"❌ Coins kam hai (balance 🪙 {bal:,}). `/daily` se pehle kamao!", ephemeral=True); return
+    faces=["🍒", "🍋", "🍇", "⭐", "💎"]
+    ghuma=[random.choice(faces) for _ in range(3)]
+    if ghuma[0] == ghuma[1] == ghuma[2]:
+        rec["coins"]=bal + amount*5; natija=f"🎰💰 **TRIPLE! +🪙 {amount*5:,} jeete!**"
+    elif ghuma[0] == ghuma[1] or ghuma[1] == ghuma[2] or ghuma[0] == ghuma[2]:
+        rec["coins"]=bal + amount; natija=f"🎰 **Jodi bani! +🪙 {amount:,} jeete!**"
+    else:
+        rec["coins"]=bal - amount; natija=f"🎰💔 Kuch nahi mila — 🪙 {amount:,} gaye."
+    _save_economy()
+    await interaction.response.send_message(f"🎰 | {' | '.join(ghuma)} |\n{natija}\n💰 Balance: **🪙 {int(rec['coins']):,}**")
+
+for _grp in (tools_group, text_group, actions_group, server_group, games_group):
+    bot.tree.add_command(_grp)
+
+
 # ---------------- MUSIC SYSTEM ----------------
 try:
     import yt_dlp as _yt_dlp
