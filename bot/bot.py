@@ -4226,9 +4226,20 @@ async def start_http_server():
 def main():
     if not TOKEN: raise SystemExit("DISCORD_BOT_TOKEN set nahi hai. .env me daalo.")
     import asyncio
+    log.info("Bot start ho raha hai... token mila: haan (lambaai %s)", len(TOKEN))
     async def _run():
-        await start_http_server()
-        await bot.start(TOKEN)
+        # HTTP (GitHub webhook) server fail ho jaye (port busy wagera) to bhi
+        # bot online hona NAHI rukna chahiye — pehle yehi ek chhupa crash tha
+        try: await start_http_server()
+        except Exception: log.warning("HTTP server start nahi hua (port busy?) — bot phir bhi online hoga\n%s", traceback.format_exc())
+        try:
+            await bot.start(TOKEN)
+        except discord.LoginFailure:
+            log.error("LOGIN FAIL: token galat/kharab hai (401). .env me sahi DISCORD_BOT_TOKEN dalo — bot DM wala purana tareeka hi chalega.")
+            raise SystemExit(1)
+        except discord.PrivilegedIntentsRequired:
+            log.error("LOGIN FAIL: Developer Portal me Server Members Intent ON Karo (Privileged Gateway Intents).")
+            raise SystemExit(1)
     try: asyncio.run(_run())
     except KeyboardInterrupt: pass
 if __name__=="__main__": main()
