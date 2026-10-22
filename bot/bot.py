@@ -2107,6 +2107,36 @@ def _ensure_ytdlp():
     return _yt_dlp
 _YTDL_OPTS={"format": "bestaudio/best", "noplaylist": True, "quiet": True, "no_warnings": True, "default_search": "ytsearch1:"}
 _FFMPEG_OPTS={"before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5", "options": "-vn"}
+class FFmpegYTDLSource(discord.AudioSource):
+    """Audio source: yt-dlp pehle song ko file me download kare, fir ffmpeg usko chale.
+    Is tareeke se YouTube signed-URL wali 403 dikkat nahi aati aur speed pakki rehti hai."""
+    def __init__(self, filename: str):
+        self._ff=discord.FFmpegPCMAudio(filename, options="-vn")
+        self._filename=filename; self._cleaned=False
+    def read(self) -> bytes:
+        return self._ff.read()
+    def is_opus(self) -> bool:
+        return False
+    def cleanup(self):
+        try: self._ff.cleanup()
+        except Exception: pass
+        if not self._cleaned:
+            self._cleaned=True
+            try:
+                import os as _o
+                _o.remove(self._filename)
+            except Exception: pass
+def _yt_download(track: dict) -> str:
+    """Song ko local file me download karo (403-proof). Caller FFmpegYTDLSource se chalata hai."""
+    import tempfile, os as _os
+    src=track.get("webpage") or track["url"]
+    out_file=_os.path.join(tempfile.gettempdir(), f"Nezuko_song_{abs(hash(src)) % 99999999}.mp3")
+    opts={"format": "bestaudio/best", "noplaylist": True, "quiet": True, "no_warnings": True,
+          "outtmpl": out_file, "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "160"}]}
+    with _yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([src])
+    if not _os.path.exists(out_file): raise RuntimeError("download fail hua")
+    return out_file
 _music_state: dict[int, dict] = {}
 def _music_of(guild_id: int) -> dict:
     st=_music_state.setdefault(guild_id, {"queue": [], "current": None, "text_channel": None, "autoplay": True, "manual_stop": False})
@@ -2161,8 +2191,10 @@ async def _play_next(guild: discord.Guild):
             return
     track=st["queue"].pop(0)
     st["current"]=track
+    # Direct stream URL ki jagah download karo — signed-URL 403 wali dikkat nahi aati.
     try:
-        source=discord.FFmpegPCMAudio(track["url"], **_FFMPEG_OPTS)
+        downloaded=await asyncio.get_event_loop().run_in_executor(None, _yt_download, track)
+        source=FFmpegYTDLSource(downloaded)
     except Exception:
         log.error("music ffmpeg fail\n%s", traceback.format_exc())
         ch=st.get("text_channel")
