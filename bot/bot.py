@@ -96,7 +96,7 @@ async def setup_hook():
         log.info("slash commands synced (global only)")
     except Exception as e: log.warning("sync fail: %s", e)
 
-_PROFILE_NAME="Nezu"
+_PROFILE_NAME=os.environ.get("BOT_PROFILE_NAME", "Nezu")  # dusre bot (Kai) ke liye .env me khaali rakho to naam nahi badlega
 _PROFILE_PIC=Path(__file__).resolve().parent / "nezu.jpg"
 _PROFILE_MARK=Path(__file__).resolve().parent / "profile_done.json"
 async def _apply_profile_once():
@@ -104,6 +104,7 @@ async def _apply_profile_once():
     Discord naam badalne par rate-limit lagata hai, isliye marker file
     me nishan laga dete hai — har restart par try nahi hoga."""
     try:
+        if not _PROFILE_NAME: return  # .env me BOT_PROFILE_NAME khaali = apna purana naam hi rakho (Kai ke liye)
         if bot.user is None or not _PROFILE_PIC.exists(): return
         import hashlib as _hl
         pic_hash=_hl.sha256(_PROFILE_PIC.read_bytes()).hexdigest()[:16]
