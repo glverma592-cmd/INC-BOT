@@ -175,7 +175,19 @@ _fallback = _fallback_post
 
 # ---- SLASH COMMANDS ----
 START_TIME = time.time()
-_warnings: dict[int, dict[int, list[str]]] = {}
+_WARNINGS_FILE = Path(__file__).resolve().parent / "warnings.json"
+def _load_warnings() -> dict[int, dict[int, list[str]]]:
+    try:
+        data=json.loads(_WARNINGS_FILE.read_text(encoding="utf-8"))
+        return {int(g): {int(u): [str(x) for x in v] for u, v in members.items()} for g, members in data.items()}
+    except Exception:
+        return {}
+_warnings: dict[int, dict[int, list[str]]] = _load_warnings()
+def _save_warnings():
+    try:
+        _WARNINGS_FILE.write_text(json.dumps({str(g): {str(u): v for u, v in members.items()} for g, members in _warnings.items()}), encoding="utf-8")
+    except Exception:
+        log.warning("warnings save fail\n%s", traceback.format_exc())
 
 _AUTOROLE_FILE = Path(__file__).resolve().parent / "autoroles.json"
 def _load_autoroles() -> dict[int, int]:
@@ -314,6 +326,7 @@ async def avatar(interaction: discord.Interaction, member: discord.Member):
 
 @bot.tree.command(name="membercount", description="Show total member count")
 async def membercount(interaction: discord.Interaction):
+    if interaction.guild is None: await interaction.response.send_message("❌ Ye sirf server me chalega.", ephemeral=True); return
     await interaction.response.send_message(f"👥 **{interaction.guild.name}** me kul **{interaction.guild.member_count}** members hai.", ephemeral=True)
 
 @bot.tree.command(name="roleinfo", description="Show role information")
@@ -360,7 +373,8 @@ async def clear(interaction: discord.Interaction, amount: int):
     if not _is_mod(interaction): await _deny(interaction); return
     if not 1 <= amount <= 100: await interaction.response.send_message("❌ 1 se 100 ke beech number do.", ephemeral=True); return
     await interaction.response.defer(ephemeral=True)
-    deleted=await interaction.channel.purge(limit=amount)
+    try: deleted=await interaction.channel.purge(limit=amount)
+    except Exception: await interaction.followup.send("❌ Messages delete nahi ho paye — mujhe **Manage Messages + Read Message History** permission chahiye.", ephemeral=True); return
     await interaction.followup.send(f"🗑️ {len(deleted)} messages delete kiye.", ephemeral=True)
 
 @bot.tree.command(name="slowmode", description="Set channel slowmode (admin)")
@@ -369,7 +383,8 @@ async def slowmode(interaction: discord.Interaction, seconds: int, channel: disc
     if not _is_mod(interaction): await _deny(interaction); return
     if not 0 <= seconds <= 21600: await interaction.response.send_message("❌ 0 se 21600 ke beech do.", ephemeral=True); return
     ch=channel or interaction.channel
-    await ch.edit(slowmode_delay=seconds)
+    try: await ch.edit(slowmode_delay=seconds)
+    except Exception: await interaction.response.send_message("❌ Slowmode nahi laga — mujhe **Manage Channels** permission chahiye.", ephemeral=True); return
     await interaction.response.send_message(f"🐌 {ch.mention} ka slowmode **{seconds}s** ho gaya.", ephemeral=True)
 
 @bot.tree.command(name="lock", description="Lock this channel (admin)")
@@ -377,7 +392,8 @@ async def slowmode(interaction: discord.Interaction, seconds: int, channel: disc
 async def lock(interaction: discord.Interaction, channel: discord.TextChannel = None):
     if not _is_mod(interaction): await _deny(interaction); return
     ch=channel or interaction.channel
-    await ch.set_permissions(interaction.guild.default_role, send_messages=False)
+    try: await ch.set_permissions(interaction.guild.default_role, send_messages=False)
+    except Exception: await interaction.response.send_message("❌ Channel lock nahi ho paya — mujhe **Manage Channels/Roles** permission chahiye.", ephemeral=True); return
     await ch.send("🔒 Ye channel band kiya gaya hai.")
     await interaction.response.send_message(f"🔒 {ch.mention} band ho gaya.", ephemeral=True)
 
@@ -386,7 +402,8 @@ async def lock(interaction: discord.Interaction, channel: discord.TextChannel = 
 async def unlock(interaction: discord.Interaction, channel: discord.TextChannel = None):
     if not _is_mod(interaction): await _deny(interaction); return
     ch=channel or interaction.channel
-    await ch.set_permissions(interaction.guild.default_role, send_messages=None)
+    try: await ch.set_permissions(interaction.guild.default_role, send_messages=None)
+    except Exception: await interaction.response.send_message("❌ Channel unlock nahi ho paya — mujhe **Manage Channels/Roles** permission chahiye.", ephemeral=True); return
     await interaction.response.send_message(f"🔓 {ch.mention} khul gaya.", ephemeral=True)
 
 @bot.tree.command(name="kick", description="Kick a member (admin)")
@@ -430,7 +447,8 @@ async def timeout_cmd(interaction: discord.Interaction, member: discord.Member, 
 @app_commands.describe(member="Kiska timeout hatana hai")
 async def untimeout(interaction: discord.Interaction, member: discord.Member):
     if not interaction.user.guild_permissions.moderate_members: await _deny(interaction); return
-    await member.timeout(None)
+    try: await member.timeout(None)
+    except discord.Forbidden: await interaction.response.send_message("❌ Nahi ho paya — mera role us member se neeche hai.", ephemeral=True); return
     await interaction.response.send_message(f"🔊 {member.mention} ka timeout hata diya.", ephemeral=True)
 
 @bot.tree.command(name="warn", description="Warn a member (admin)")
@@ -438,6 +456,7 @@ async def untimeout(interaction: discord.Interaction, member: discord.Member):
 async def warn(interaction: discord.Interaction, member: discord.Member, reason: str):
     if not _is_mod(interaction): await _deny(interaction); return
     _warnings.setdefault(interaction.guild.id, {}).setdefault(member.id, []).append(reason)
+    _save_warnings()
     total=len(_warnings[interaction.guild.id][member.id])
     try: await member.send(f"⚠️ Tumhe **{interaction.guild.name}** me warning mili: {reason} (kul warnings: {total})")
     except discord.Forbidden: pass
@@ -455,7 +474,7 @@ async def warnings_cmd(interaction: discord.Interaction, member: discord.Member)
 @app_commands.describe(member="Kis member ki warnings saaf karni hai")
 async def clearwarn(interaction: discord.Interaction, member: discord.Member):
     if not _is_mod(interaction): await _deny(interaction); return
-    _warnings.get(interaction.guild.id, {}).pop(member.id, None)
+    _warnings.get(interaction.guild.id, {}).pop(member.id, None); _save_warnings()
     await interaction.response.send_message(f"✅ {member.mention} ki warnings saaf ho gayi.", ephemeral=True)
 
 @bot.tree.command(name="role_add", description="Give a role to a member (admin)")
@@ -651,7 +670,7 @@ async def _refresh_ke_sath(placeholder, label: str, coro):
 
 async def _ask_pollinations(prompt: str) -> str | None:
     """Last backup AI (Pollinations, bina key ke chalta hai). Gemini fail ho tab use Karo."""
-    full=(_Nezuko_FRIEND + "\n\nUser: " + prompt[:3000])
+    full=(_NEZUKO_FRIEND + "\n\nUser: " + prompt[:3000])
     url="https://text.pollinations.ai/" + urllib.parse.quote(full, safe="")
     try:
         async with aiohttp.ClientSession() as session:
