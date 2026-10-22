@@ -52,6 +52,7 @@ check("nacl (PyNaCl)", modchk("nacl"))
 check("davey (Davey)", modchk("davey"))
 check("yt_dlp", modchk("yt_dlp"))
 check("edge_tts", modchk("edge_tts"))
+check("speech_recognition (STT)", modchk("speech_recognition"))
 print("[2] System tools:")
 check("ffmpeg", _cmd("ffmpeg"))
 print("[3] Voice bolna (opus):")
@@ -64,7 +65,7 @@ try:
     py_compile_ok = compile(src, "bot.py", "exec")
     n_cmd = src.count("@bot.tree.command")
     print(f"  bot.py compile -> OK, slash commands code me: {n_cmd}")
-    for k in ("_speak_in_vc", "_handle_voice_utterance", "_start_listening", "_stt_gemini"):
+    for k in ("_speak_in_vc", "_handle_voice_utterance", "_start_listening", "_stt_gemini", "_stereo_to_mono", "_prefetch_track_async"):
         print(f"  {k:35s} -> {'OK hai' if k in src else 'MISSING!'}")
 except SyntaxError as e:
     print(f"  bot.py compile -> SYNTAX ERROR line {e.lineno}: {e.msg}")

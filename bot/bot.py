@@ -35,6 +35,20 @@ def _load_dotenv(path=None):
         os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 _load_dotenv()
 
+_HTTP_SESSION=None
+class _SharedSession:
+    """Ek hi HTTP connection baar-baar use Karo — har sawal par naya
+    connection banane ka time bachao (chatbot/VC fast response jugaad)."""
+    async def __aenter__(self):
+        global _HTTP_SESSION
+        if _HTTP_SESSION is None or _HTTP_SESSION.closed:
+            _HTTP_SESSION=aiohttp.ClientSession()
+        return _HTTP_SESSION
+    async def __aexit__(self, *exc):
+        return False
+def _sess():
+    return _SharedSession()
+
 TOKEN=os.environ.get("DISCORD_BOT_TOKEN","")
 GITHUB_HOOK_SECRET=os.environ.get("GITHUB_HOOK_SECRET","")
 HTTP_PORT=int(os.environ.get("HTTP_PORT","8080"))
@@ -272,7 +286,8 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="👑 No Prefix (Owner Only)", value="`/noprefix` — granted member can chat with the AI without `/ask` or a mention. Power lasts **2 months**.", inline=False)
     embed.add_field(name="🤖 AI Chat", value="`/ask sawal` • `/chatbot` • `/summarize` — sawal pucho, tag-chat chalu Karo, ya lambi chat ka short summary banao", inline=False)
     embed.add_field(name="🎨 AI Image", value="`/image kya banana hai` — bas ye ek hi image wala command hai", inline=False)
-    embed.add_field(name="🎵 Music", value="`/play gaana` • `/skip` • `/stop` • `/pause` • `/resume` • `/queue` • `/nowplaying` — VC join karke gaane ka naam ya YouTube link do", inline=False)
+    embed.add_field(name="🎵 Music", value="`/play` • `/p gaana` • `/join` • `/skip` • `/stop` • `/pause` • `/resume` • `/queue` • `/nowplaying` • `/autoplay` — VC join karke gaane ka naam ya YouTube link do", inline=False)
+    embed.add_field(name="🎙️ VC Voice Chat", value="`/vcchat On` — fir VC me bolo **'Nezuko, ...'** (ya **'Nezo, ...'**), Nezuko sunke wahi awaaz me jawab degi. `/vcchat Off` se band.", inline=False)
     embed.add_field(name="✨ More Utility & Fun", value="`/invite` `/support` `/rules` `/suggest` `/coinflip` `/dice` `/choose` `/eightball` `/rps` `/calc` `/password` `/qr` `/color` `/emojiinfo` `/channelinfo` `/roles` `/banner` `/afk` `/snipe` `/timer`", inline=False)
     embed.set_footer(text="Naya member aane pe bot khud welcome DM bhejta hai.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -673,7 +688,7 @@ async def _ask_pollinations(prompt: str) -> str | None:
     full=(_NEZUKO_FRIEND + "\n\nUser: " + prompt[:3000])
     url="https://text.pollinations.ai/" + urllib.parse.quote(full, safe="")
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _sess() as session:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=40)) as resp:
                 if resp.status != 200:
                     log.warning("Pollinations text HTTP %s", resp.status)
@@ -692,13 +707,14 @@ async def _ask_gemini(prompt: str, history=None) -> str:
     payload={
         "system_instruction": {"parts": [{"text": _NEZUKO_FRIEND + " Keep answers helpful and under 1800 characters."}]},
         "contents": (history or []) + [{"role": "user", "parts": [{"text": prompt[:4000]}]}],
+        "generationConfig": {"maxOutputTokens": 800, "temperature": 0.7},
     }
     models=[]
     for m in [GEMINI_MODEL] + _GEMINI_FALLBACK_MODELS:
         if m and m not in models: models.append(m)
     last_status=0
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _sess() as session:
             for model in models:
                 url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
                 try:
@@ -733,10 +749,11 @@ async def _ask_gemini_once(prompt: str, history=None, timeout: float = 8.0) -> s
     payload={
         "system_instruction": {"parts": [{"text": _NEZUKO_FRIEND + " Keep answers helpful and under 1800 characters."}]},
         "contents": (history or []) + [{"role": "user", "parts": [{"text": prompt[:4000]}]}],
+        "generationConfig": {"maxOutputTokens": 800, "temperature": 0.7},
     }
     url=f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _sess() as session:
             async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
                 if resp.status != 200:
                     log.warning("Gemini-fast HTTP %s", resp.status)
@@ -1268,7 +1285,7 @@ _image_cooldown: dict[int, float] = {}
 async def _make_image(prompt: str) -> bytes:
     """Free image generation (Pollinations) — koi key nahi chahiye. Free limit: ~1 image/45s, isliye 402 pe ek baar ruk ke dobara."""
     url="https://image.pollinations.ai/prompt/"+urllib.parse.quote(prompt)+f"?width=1024&height=1024&nologo=true&seed={random.randint(1,999999)}"
-    async with aiohttp.ClientSession() as session:
+    async with _sess() as session:
         for attempt in range(2):
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
                 if resp.status == 200:
@@ -2353,9 +2370,20 @@ def _yt_download(track: dict) -> str:
     raise RuntimeError("download fail hua")
 _music_state: dict[int, dict] = {}
 def _music_of(guild_id: int) -> dict:
-    st=_music_state.setdefault(guild_id, {"queue": [], "current": None, "text_channel": None, "autoplay": True, "manual_stop": False})
+    st=_music_state.setdefault(guild_id, {"queue": [], "current": None, "text_channel": None, "autoplay": True, "manual_stop": False, "played_vids": [], "fail_count": 0})
     st.setdefault("autoplay", True); st.setdefault("manual_stop", False)
+    st.setdefault("played_vids", []); st.setdefault("fail_count", 0)
     return st
+
+async def _prefetch_track_async(track: dict):
+    """Background me gaana pehle-se download rakho — sahi async tareeke se
+    (purana code create_task(Future) se yahi crash ho jata tha = autoplay band)."""
+    if track.pop("_prefetch_started", None): return
+    track["_prefetch_started"]=True
+    try:
+        track["_prefetched"]=await asyncio.get_event_loop().run_in_executor(None, _prefetch_track, track)
+    except Exception:
+        track["_prefetched"]=None
 def _yt_extract(query: str) -> dict:
     with _yt_dlp.YoutubeDL(_YTDL_OPTS) as ydl:
         info=ydl.extract_info(query, download=False)
@@ -2364,7 +2392,7 @@ def _yt_extract(query: str) -> dict:
             if not entries: raise RuntimeError("no result")
             info=entries[0]
         return {"title": info.get("title", "Unknown song"), "url": info.get("url"), "webpage": info.get("webpage_url", ""), "duration": info.get("duration") or 0, "vid": info.get("id", "")}
-def _yt_similar(track: dict) -> dict | None:
+def _yt_similar(track: dict, seen_vids=None) -> dict | None:
     """Uske gaane jaisa (similar) gaana dhundo autoplay ke liye.
     Titles YouTube search me cleaned rakhe to sahi results aate hai."""
     raw=(track.get("title") or "").strip()
@@ -2373,14 +2401,17 @@ def _yt_similar(track: dict) -> dict | None:
         raw=raw.split(ch_to_cut)[0].strip()
     base=raw.strip(" -–—|")
     if len(base) < 3: base=(track.get("title") or "")[:40]
-    opts=dict(_YTDL_OPTS); opts["default_search"]="ytsearch5:"
+    seen=set(seen_vids or [])
+    if track.get("vid"): seen.add(track.get("vid"))
+    opts=dict(_YTDL_OPTS); opts["default_search"]="ytsearch8:"
     with _yt_dlp.YoutubeDL(opts) as ydl:
         info=ydl.extract_info(base + " similar mix", download=False)
         for e in (info.get("entries") or []):
             if not e: continue
             vid=e.get("id"); wp=e.get("webpage_url") or (("https://www.youtube.com/watch?v="+vid) if vid else None)
-            if vid and vid != track.get("vid") and wp:
-                return {"title": e.get("title", "Unknown song"), "url": wp, "webpage": wp, "duration": e.get("duration") or 0, "vid": vid, "requester": "Autoplay 🔀"}
+            dur=e.get("duration") or 0
+            if vid and vid not in seen and wp and (not dur or dur <= 900):
+                return {"title": e.get("title", "Unknown song"), "url": wp, "webpage": wp, "duration": dur, "vid": vid, "requester": "Autoplay 🔀"}
     return None
 
 async def _play_next(guild: discord.Guild):
@@ -2390,17 +2421,19 @@ async def _play_next(guild: discord.Guild):
     if st.get("manual_stop"):
         st["current"]=None
         return
+    if vc.is_playing() or vc.is_paused():
+        return  # kuch baj raha hai — do jagah se ek saath play mat karo
     if not st["queue"]:
         last=st.get("last_played") or st.get("current")
         if st.get("autoplay", True) and last and _ensure_ytdlp() is not None:
             try:
-                sim=await asyncio.get_event_loop().run_in_executor(None, _yt_similar, last)
+                sim=await asyncio.get_event_loop().run_in_executor(None, lambda: _yt_similar(last, st.get("played_vids")))
             except Exception:
                 sim=None
             if sim:
                 st["queue"].append(sim)
                 # Autoplay wala gaana bhi pehle se download hona chalu — Khatam hone par gap nahin aayega
-                asyncio.create_task(asyncio.get_event_loop().run_in_executor(None, lambda: sim.__setitem__("_prefetched", _prefetch_track(sim))))
+                asyncio.create_task(_prefetch_track_async(sim))
                 ch=st.get("text_channel")
                 if ch is not None:
                     try: await ch.send(f"🔀 **Autoplay:** Gaana khatam, similar gaana la rahi hu... 🎵")
@@ -2414,6 +2447,8 @@ async def _play_next(guild: discord.Guild):
     track=st["queue"].pop(0)
     st["current"]=track
     st["last_played"]=track
+    if track.get("vid"):
+        st["played_vids"]=(st["played_vids"] + [track["vid"]])[-20:]
     # Direct stream URL ki jagah download karo — signed-URL 403 wali dikkat nahi aati.
     try:
         pre=track.pop("_prefetched", None)
@@ -2421,15 +2456,23 @@ async def _play_next(guild: discord.Guild):
         source=FFmpegYTDLSource(downloaded)
     except Exception as e:
         log.error("music ffmpeg fail\n%s", traceback.format_exc())
+        st["fail_count"]=int(st.get("fail_count", 0)) + 1
         ch=st.get("text_channel")
         if ch is not None:
             try: await ch.send(f"⚠️ Gaana nahi chal paya — wajah: `{str(e)[:120]}`")
             except Exception: pass
-        remaining=len(st.get("queue") or [])
-        nxt_exists=bool(st.get("queue"))
-        if nxt_exists:
+        if st.get("queue"):
             asyncio.create_task(_play_next(guild))
+        elif st.get("autoplay", True) and not st.get("manual_stop") and st["fail_count"] < 3:
+            # queue khali par autoplay se agla similar try karo — ek fail par gana band nahi hoga
+            asyncio.create_task(_play_next(guild))
+        else:
+            st["current"]=None
+            if st["fail_count"] >= 3 and ch is not None:
+                try: await ch.send("⏹️ Lagatar 3 gaane fail hue — autoplay rok diya. `/p` se naya gaana lagao.")
+                except Exception: pass
         return
+    st["fail_count"]=0
     def _after(error):
         if error: log.warning("music playback error: %s", error)
         asyncio.run_coroutine_threadsafe(_play_next(guild), bot.loop)
@@ -2437,14 +2480,7 @@ async def _play_next(guild: discord.Guild):
     if st.get("queue"):
         _nxt=st["queue"][0]
         try:
-            async def _pre_fetch():
-                try:
-                    if _nxt.pop("_prefetch_started", None): return
-                    _nxt["_prefetch_started"]=True
-                    _nxt["_prefetched"]=await asyncio.get_event_loop().run_in_executor(None, _prefetch_track, _nxt)
-                except Exception:
-                    pass
-            asyncio.create_task(_pre_fetch())
+            asyncio.create_task(_prefetch_track_async(_nxt))
         except Exception:
             pass
     try:
@@ -2523,7 +2559,7 @@ async def _stt_gemini(wav_bytes: bytes) -> str:
         if not model: continue
         try:
             url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-            async with aiohttp.ClientSession() as session:
+            async with _sess() as session:
                 async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=35)) as resp:
                     txt=await resp.text()
                     if resp.status == 200:
@@ -2559,7 +2595,7 @@ async def _stt_gemini_once(wav_bytes: bytes) -> str:
         if not model: continue
         try:
             url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-            async with aiohttp.ClientSession() as session:
+            async with _sess() as session:
                 async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=9)) as resp:
                     txt=await resp.text()
                     if resp.status != 200:
