@@ -96,9 +96,39 @@ async def setup_hook():
         log.info("slash commands synced (global only)")
     except Exception as e: log.warning("sync fail: %s", e)
 
+_PROFILE_NAME="Nezu"
+_PROFILE_PIC=Path(__file__).resolve().parent / "nezu.jpg"
+_PROFILE_MARK=Path(__file__).resolve().parent / "profile_done.json"
+async def _apply_profile_once():
+    """Bot ka naam 'Nezu' aur profile pic (nezu.jpg) ek baar set karo.
+    Discord naam badalne par rate-limit lagata hai, isliye marker file
+    me nishan laga dete hai — har restart par try nahi hoga."""
+    try:
+        if bot.user is None or not _PROFILE_PIC.exists(): return
+        import hashlib as _hl
+        pic_hash=_hl.sha256(_PROFILE_PIC.read_bytes()).hexdigest()[:16]
+        mark={}
+        try: mark=json.loads(_PROFILE_MARK.read_text(encoding="utf-8"))
+        except Exception: mark={}
+        naam_badla = bot.user.name != _PROFILE_NAME
+        pic_badli = mark.get("pic") != pic_hash
+        if not naam_badla and not pic_badli: return
+        kwargs={}
+        if naam_badla: kwargs["username"]=_PROFILE_NAME
+        if pic_badli: kwargs["avatar"]=_PROFILE_PIC.read_bytes()
+        await bot.user.edit(**kwargs)
+        mark["pic"]=pic_hash; mark["name"]=_PROFILE_NAME
+        try: _PROFILE_MARK.write_text(json.dumps(mark), encoding="utf-8")
+        except Exception: pass
+        log.info("profile set: naam=%s pic-nayi=%s", _PROFILE_NAME, pic_badli)
+    except Exception as e:
+        # naam liya hua (taken) ya rate-limit — bot chalta rahega, purana naam chalega
+        log.warning("profile set nahi ho paya (naam taken/rate-limit ho sakta hai): %s", e)
+
 @bot.event
 async def on_ready():
     log.info("logged in as %s (id=%s) — %s guilds", bot.user, bot.user.id, len(bot.guilds))
+    await _apply_profile_once()
     try:
         await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f"{len(bot.guilds)} servers | /help"))
     except Exception:
@@ -2688,7 +2718,7 @@ def _stt_google_free(wav_bytes: bytes, quick: bool = False) -> str:
     return pehli
 
 _WAKE_WORDS=("nezuko", "Nezuko", "nezuku", "nezko", "nuzuko", "ne juko", "ne zuko", "Nezuko",
-             "nezo", "Nezo", "ne zu", "nijuko", "mezuko", "nezukho",
+             "nezo", "Nezo", "ne zu", "nijuko", "mezuko", "nezukho", "nezu", "ne zu ko",
              "नेज़ुको", "नेजुको", "नेज़ुको", "नेजुको", "नेजको", "नेज़को",
              "नीतू", "नीटू", "नेजु", "नेजू", "नेजो", "नेज़ो", "नीजुको", "नेतुको")
 _WAKE_PATTERN="|".join(sorted((re.escape(w) for w in _WAKE_WORDS), key=len, reverse=True))
