@@ -2748,6 +2748,117 @@ async def purge_cmd(interaction: discord.Interaction, member: discord.Member, am
         await interaction.followup.send("⚠️ Delete nahi ho paya — 14 din se purane messages Discord bulk-delete nahi karne deta, ya permission nahi hai.", ephemeral=True)
 
 
+
+# ---------------- ALL NUKE (sirf bot owner + server owner, confirm ke saath) ----------------
+def _server_backup_bytes(guild) -> bytes:
+    """Nuke se pehle server ke channels/roles ki list ka backup (JSON)."""
+    data={
+        "guild": guild.name,
+        "guild_id": guild.id,
+        "channels": [
+            {"name": getattr(c, "name", "?"), "type": str(getattr(c, "type", "?")),
+             "category": getattr(getattr(c, "category", None), "name", None),
+             "position": getattr(c, "position", 0),
+             "topic": getattr(c, "topic", None)}
+            for c in guild.channels
+        ],
+        "roles": [r.name for r in guild.roles],
+    }
+    return json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+
+async def _all_nuke_execute(guild, actor) -> dict:
+    """Saare channels/categories delete Karo, fir ek fresh #general banao.
+    Roles, members aur bans ko haath nahi lagta."""
+    channels=list(guild.channels)
+    # pehle normal channels, categories sabse aakhir me
+    channels.sort(key=lambda c: 1 if isinstance(c, discord.CategoryChannel) else 0)
+    results=await asyncio.gather(
+        *[c.delete(reason=f"All Nuke by {actor}") for c in channels],
+        return_exceptions=True)
+    deleted=sum(1 for r in results if not isinstance(r, Exception))
+    failed=len(channels) - deleted
+    fresh=None
+    try:
+        fresh=await guild.create_text_channel("general", reason="All Nuke ke baad fresh channel")
+    except Exception:
+        log.warning("allnuke: fresh #general nahi ban paya guild %s\n%s", guild.id, traceback.format_exc())
+    log.warning("ALL NUKE guild %s (%s) by %s: deleted=%s failed=%s", guild.id, guild.name, actor, deleted, failed)
+    return {"deleted": deleted, "failed": failed, "total": len(channels), "fresh": fresh}
+
+class AllNukeConfirmView(discord.ui.View):
+    """Confirm/Cancel button — sirf wahi dabayega jisne command chalaya."""
+    def __init__(self, owner_id: int, guild_id: int):
+        super().__init__(timeout=60)
+        self.owner_id=owner_id
+        self.guild_id=guild_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("❌ Ye confirm sirf bot owner ke liye hai.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="HA, ALL NUKE KARO", style=discord.ButtonStyle.danger, emoji="💥")
+    async def btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for child in self.children: child.disabled=True
+        try: await interaction.response.edit_message(content="💥 **All Nuke shuru...** backup owner ko DM ho raha hai, fir saare channels delete honge.", view=self)
+        except Exception: pass
+        guild=interaction.guild
+        if guild is None:
+            return
+        # 1) Backup DM (delete se pehle, taaki structure wapas banaya ja sake)
+        try:
+            backup=_server_backup_bytes(guild)
+            owner=interaction.user
+            await owner.send(content=f"🗂️ **{guild.name}** ka All-Nuke backup — channels/roles ki puri list:",
+                             file=discord.File(io.BytesIO(backup), filename=f"{guild.name}-backup.json"))
+        except Exception:
+            log.warning("allnuke backup DM fail\n%s", traceback.format_exc())
+        # 2) Asli nuke
+        result=await _all_nuke_execute(guild, interaction.user)
+        fresh=result["fresh"]
+        if fresh is not None:
+            try:
+                await fresh.send(embed=discord.Embed(
+                    title="💥 Server All-Nuked!",
+                    description=(f"{interaction.user.mention} (bot owner) ne is server ke saare channels nuke kar diye.\n\n"
+                                 f"🗑️ Delete hue: **{result['deleted']}** / {result['total']} channels"
+                                 + (f" • {result['failed']} fail (permission)" if result["failed"] else "")
+                                 + "\n🗂️ Structure ka backup owner ko DM kar diya gaya hai.\n✨ Ye raha bilkul naya pehla channel — yaha se server dobara banao!"),
+                    color=0xe74c3c))
+            except Exception:
+                pass
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="✖️")
+    async def btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for child in self.children: child.disabled=True
+        await interaction.response.edit_message(content="✅ **All Nuke cancel.** Kuch delete nahi hua.", view=self)
+
+@bot.tree.command(name="allnuke", description="[BOT OWNER ONLY] Server ke saare channels nuke Karo")
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+async def allnuke_cmd(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Ye sirf server me chalega.", ephemeral=True); return
+    owner_id=await _get_bot_owner_id()
+    if interaction.user.id != owner_id:
+        await interaction.response.send_message("❌ Ye command **sirf bot owner** ke liye hai.", ephemeral=True); return
+    if interaction.guild.owner_id != interaction.user.id:
+        await interaction.response.send_message("❌ Safety ke liye: ye sirf us server me chalega jaha **tum hi server owner** ho. Dusro ke server par ye kabhi nahi chalega.", ephemeral=True); return
+    me=interaction.guild.me
+    if me is None or not (me.guild_permissions.administrator or me.guild_permissions.manage_channels):
+        await interaction.response.send_message("❌ Nuke ke liye bot ko is server me **Manage Channels / Administrator** chahiye.", ephemeral=True); return
+    total=len(interaction.guild.channels)
+    embed=discord.Embed(
+        title="💥 ALL NUKE — Aakhri chetavni!",
+        description=(f"**{interaction.guild.name}** ke **saare {total} channels/categories delete** ho jayenge!\n\n"
+                     "✅ Roles, members aur bans safe rahenge\n"
+                     "🗂️ Delete se pehle channel/role list ka backup tumhe DM hoga\n"
+                     "⚠️ Messages wapas **kabhi nahi** ayenge\n\n"
+                     "Pakka karna hai to neeche wala lal button dabao. 60 second me time khatam ho jayega."),
+        color=0xe74c3c)
+    await interaction.response.send_message(embed=embed, view=AllNukeConfirmView(interaction.user.id, interaction.guild.id), ephemeral=True)
+
 # ---------------- EXTRA GROUPS: 56 SUBCOMMANDS (Discord 100 limit ke andar) ----------------
 # Discord Ek bot ko max 100 top-level slash commands deta hai — isliye naye
 # features group-commands ke andar subcommands bana ke jode hai.
