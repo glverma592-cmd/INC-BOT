@@ -619,6 +619,17 @@ async def remind_cancel_cmd(interaction: discord.Interaction, reminder_id: int):
 _ask_cooldown: dict[int, float] = {}
 
 _GEMINI_FALLBACK_MODELS=["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3-flash-preview"]
+_NEZUKO_FRIEND = (
+"You are NezukoHelper, but everyone calls you Nezuko. Behave like a real, close female friend talking naturally "
+"— NOT like a robot or an AI assistant. Be warm, caring, thoda playful aur expresssive: react naturally (khushi, "
+"hairaani, fikr), remember the context of the conversation and continue it like a human would, sometimes ask a "
+"small follow-up question to continue the talk. Do NOT repeatedly say you are an AI/bot; only mention it if "
+"directly asked. Avoid robot-like template phrases and avoid repeating the same line again and again. "
+"LANGUAGE: always reply in the SAME language and script as the user's latest message (English->English, "
+"Hindi Devanagari->Hindi, Hinglish Roman->Hinglish Roman, any language->same language); switch if asked. "
+"Never romantic/flirty. Use at most 1-2 cute emojis (🌸 ✨) sometimes, not in every line. "
+"For voice (VC) replies: keep it very short and spoken-natural, 1-2 small sentences. For text chat: friendly and concise."
+)
 async def _refresh_ke_sath(placeholder, label: str, coro):
     """Jawab/image bante time placeholder message me har 1 second me timer update Karo."""
     if placeholder is None:
@@ -640,7 +651,7 @@ async def _refresh_ke_sath(placeholder, label: str, coro):
 
 async def _ask_pollinations(prompt: str) -> str | None:
     """Last backup AI (Pollinations, bina key ke chalta hai). Gemini fail ho tab use Karo."""
-    full=("You are NezukoHelper, but everyone calls you Nezuko — a sweet, friendly anime girl assistant. Talk in a soft, cute, caring tone with a few cute emojis (🌸 ✨) sometimes, never romantic/flirty. Always reply in the SAME language and script as the user's message (English->English, Hindi->Hindi, Hinglish Roman->Hinglish Roman, Marathi->Marathi, any language->same language). If the user asks to switch language, switch. Be concise, under 1500 characters." + "\n\nUser: " + prompt[:3000])
+    full=(_Nezuko_FRIEND + "\n\nUser: " + prompt[:3000])
     url="https://text.pollinations.ai/" + urllib.parse.quote(full, safe="")
     try:
         async with aiohttp.ClientSession() as session:
@@ -660,7 +671,7 @@ async def _ask_gemini(prompt: str, history=None) -> str:
         if backup: return backup
         return "⚠️ AI is not configured yet — the `GEMINI_API_KEY` is missing."
     payload={
-        "system_instruction": {"parts": [{"text": "You are NezukoHelper, but everyone calls you Nezuko — a sweet, friendly anime girl assistant on Discord. PERSONALITY: Talk in a soft, cute and caring girl-like tone, like a kind anime character. Be warm, cheerful and helpful. You may use a few cute emojis (🌸 ✨ 💖) sometimes, but stay clear and useful — never overdo it, never be romantic or flirty. You can call yourself 'Nezuko' sometimes. LANGUAGE RULE (highest priority): Always reply in the SAME language and script as the user's latest message. If the user writes in English, reply in English. If Hindi in Devanagari, reply in Hindi (Devanagari). If Hinglish (Roman Hindi), reply in Hinglish (Roman script). If Marathi, Bengali, Urdu, Spanish or any other language — reply in that same language. If the user asks you to speak/switch to a particular language, switch to that language from then on. Keep answers helpful, concise and under 1800 characters."}]},
+        "system_instruction": {"parts": [{"text": _NEZUKO_FRIEND + " Keep answers helpful and under 1800 characters."}]},
         "contents": (history or []) + [{"role": "user", "parts": [{"text": prompt[:4000]}]}],
     }
     models=[]
@@ -695,6 +706,68 @@ async def _ask_gemini(prompt: str, history=None) -> str:
     if last_status == 429: return "⚠️ The AI free limit is over for now — please try again in a little while."
     if last_status == 503: return "⚠️ The AI is busy right now — please try again in a minute."
     return "⚠️ The AI could not answer right now — please try again in a little while."
+
+
+async def _ask_gemini_once(prompt: str, history=None, timeout: float = 8.0) -> str | None:
+    """Ek hi tez Gemini model se ek try — race ke liye."""
+    if not GEMINI_API_KEY: return None
+    payload={
+        "system_instruction": {"parts": [{"text": _NEZUKO_FRIEND + " Keep answers helpful and under 1800 characters."}]},
+        "contents": (history or []) + [{"role": "user", "parts": [{"text": prompt[:4000]}]}],
+    }
+    url=f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                if resp.status != 200:
+                    log.warning("Gemini-fast HTTP %s", resp.status)
+                    return None
+                data=await resp.json()
+                t=(data["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
+                return t[:1900] if t else None
+    except Exception:
+        log.warning("Gemini-fast fail\n%s", traceback.format_exc())
+        return None
+
+async def _ask_ai_fast(prompt: str, history=None, timeout: float = 16.0) -> str:
+    """Sabse tez acha jawab: Gemini aur backup ko ek saath daudao —
+    jo pehle sahi jawab de, wahi lo, dusre ko wahi rok do. Isiliye jawab jaldi aata hai."""
+    # backup (Pollinations) ko purani baatein bhi samjhao taaki dost jaisi continuity rahe
+    pol_prompt=prompt
+    if history:
+        lines=[]
+        for h in history[-6:]:
+            try:
+                txt=h["parts"][0]["text"]
+                lines.append(("User: " if h.get("role")=="user" else "Nezuko: ") + txt[:400])
+            except Exception: pass
+        if lines:
+            pol_prompt="Hamari ab tak ki baat-cheet:\n" + "\n".join(lines) + "\n\nUser (ab bola): " + prompt
+    tasks={}
+    if GEMINI_API_KEY:
+        tasks[asyncio.create_task(_ask_gemini_once(prompt, history, timeout=min(9.0, timeout)))]="gemini"
+    tasks[asyncio.create_task(_ask_pollinations(pol_prompt))]="backup"
+    deadline=time.time()+timeout
+    try:
+        pending=set(tasks)
+        while pending and time.time() < deadline:
+            done, pending = await asyncio.wait(pending, timeout=max(0.1, deadline-time.time()), return_when=asyncio.FIRST_COMPLETED)
+            if not done: break
+            for t in done:
+                try: r=t.result()
+                except Exception: r=None
+                if r and len(r.strip())>=2 and not r.startswith("⚠️"):
+                    for bachi in pending: bachi.cancel()
+                    log.info("AI jawab source: %s", tasks[t])
+                    return r
+        for t in pending: t.cancel()
+    except Exception:
+        log.warning("ai-fast fail\n%s", traceback.format_exc())
+    # dono fail — purana pura Gemini try aakhri ummeed
+    try:
+        return await _ask_gemini(prompt, history)
+    except Exception:
+        return "⚠️ Could not reach the AI — please try again in a little while."
 
 # ---------------- GIVEAWAY SYSTEM ----------------
 _GIVEAWAY_FILE = Path(__file__).resolve().parent / "giveaways.json"
@@ -946,7 +1019,7 @@ async def ask_cmd(interaction: discord.Interaction, sawal: str):
     await interaction.response.defer()
     soch=await interaction.followup.send("🌸 **Nezuko soch rahi hai...** ✨ _(jawab taiyar ho raha hai)_")
     hist=_memory.setdefault((interaction.guild.id if interaction.guild else 0, interaction.user.id), [])
-    jawab=await _refresh_ke_sath(soch, "🌸 **Nezuko soch rahi hai...** ✨", _ask_gemini(sawal, hist))
+    jawab=await _refresh_ke_sath(soch, "🌸 **Nezuko soch rahi hai...** ✨", _ask_ai_fast(sawal, hist))
     hist += [{"role":"user","parts":[{"text":sawal[:2000]}]}, {"role":"model","parts":[{"text":jawab[:2000]}]}]
     del hist[:-6]
     try:
@@ -1093,7 +1166,7 @@ async def on_message(message: discord.Message):
                 except Exception:
                     pass
                 async with message.channel.typing():
-                    jawab=await _refresh_ke_sath(soch, "🌸 **Nezuko soch rahi hai...** ✨", _ask_gemini(sawal, hist))
+                    jawab=await _refresh_ke_sath(soch, "🌸 **Nezuko soch rahi hai...** ✨", _ask_ai_fast(sawal, hist))
                 hist += [{"role":"user","parts":[{"text":sawal[:2000]}]}, {"role":"model","parts":[{"text":jawab[:2000]}]}]
                 del hist[:-6]
                 boolegi=False
@@ -2438,14 +2511,52 @@ async def _stt_gemini(wav_bytes: bytes) -> str:
     return ""
 
 
-async def _stt_first_try(wav_bytes: bytes) -> str:
-    """Pehle Google free pehchan (sabse zyada chalti hai), fir Gemini audio."""
+async def _stt_gemini_once(wav_bytes: bytes) -> str:
+    """Gemini se awaaz ko ek tez try me samjho (race ke liye)."""
+    if not GEMINI_API_KEY: return ""
+    import base64 as _b64
+    prompt=("Listen to this audio and transcribe EXACTLY what the person said "
+            "(Hindi/Hinglish/English jaise bola hai waise hi, same script me). Return ONLY the transcript text.")
+    payload={"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/wav", "data": _b64.b64encode(wav_bytes).decode()}}]}]}
     try:
-        t=await asyncio.get_event_loop().run_in_executor(None, _stt_google_free, wav_bytes)
-        if t: return t
+        url="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=12)) as resp:
+                txt=await resp.text()
+                if resp.status != 200:
+                    log.warning("STT Gemini HTTP %s body: %s", resp.status, txt[:200])
+                    return ""
+                data=json.loads(txt)
+                return (data["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
     except Exception:
-        pass
-    # Gemini audio last me rakha tha — ab bilkul hata diya, sirf free hai
+        log.warning("STT Gemini fail\n%s", traceback.format_exc())
+        return ""
+
+async def _stt_first_try(wav_bytes: bytes) -> str:
+    """Awaaz samajhne ki race: Google-free aur Gemini dono ek saath —
+    jo pehle sahi transcript de, wahi lo (tez + sahi)."""
+    async def _google():
+        try:
+            return await asyncio.get_event_loop().run_in_executor(None, _stt_google_free, wav_bytes)
+        except Exception:
+            log.warning("STT google fail\n%s", traceback.format_exc())
+            return ""
+    tasks={asyncio.create_task(_google()): "google-free", asyncio.create_task(_stt_gemini_once(wav_bytes)): "gemini"}
+    deadline=time.time()+16
+    pending=set(tasks)
+    try:
+        while pending and time.time() < deadline:
+            done, pending = await asyncio.wait(pending, timeout=max(0.1, deadline-time.time()), return_when=asyncio.FIRST_COMPLETED)
+            if not done: break
+            for t in done:
+                try: r=t.result()
+                except Exception: r=""
+                if r:
+                    for b in pending: b.cancel()
+                    log.info("STT source: %s", tasks[t])
+                    return r
+    except Exception:
+        log.warning("STT race fail\n%s", traceback.format_exc())
     return ""
 
 def _stt_google_free(wav_bytes: bytes) -> str:
@@ -2472,37 +2583,57 @@ def _stt_google_free(wav_bytes: bytes) -> str:
     rec=_sr.Recognizer()
     with _sr.AudioFile(_io.BytesIO(bio.getvalue())) as source:
         audio=rec.record(source)
+    pehli=""
     for lang in ("hi-IN", "en-IN", "en-US"):
         try:
             t=rec.recognize_google(audio, language=lang)
-            if t: return t
         except Exception:
             continue
-    return ""
+        if not t: continue
+        if not pehli: pehli=t
+        low=t.lower().replace("\u093c", "")
+        if any(w in low for w in ("Nezuko", "nezuko", "नेजुको", "नेजको", "नेज़ुको", "nezko")):
+            return t
+    return pehli
 
-_WAKE_WORDS=("nezuko", "Nezuko", "nezuku", "nezko", "nuzuko", "ne juko", "ne zuko")
+_WAKE_WORDS=("nezuko", "Nezuko", "nezuku", "nezko", "nuzuko", "ne juko", "ne zuko", "Nezuko",
+             "नेज़ुको", "नेजुको", "नेज़ुको", "नेजुको", "नेजको", "नेज़को")
+_WAKE_PATTERN="|".join(sorted((re.escape(w) for w in _WAKE_WORDS), key=len, reverse=True))
+_VC_CONVO: dict[tuple[int, int], float] = {}
+def _find_wake(transcript: str) -> bool:
+    """Naam kisi bhi roop/script me bola ho — pehchan lo (Hindi me aksar Devanagari aata hai)."""
+    low=(transcript or "").lower()
+    saaf=low.replace("\u093c", "").replace("ज़", "ज")
+    for w in _WAKE_WORDS:
+        w2=w.lower().replace("\u093c", "").replace("ज़", "ज")
+        if w in low or w2 in saaf:
+            return True
+    return False
 async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
     """Ek bandi hui boli process Karo: wake word -> sawal -> jawab -> VC me bol do."""
     try:
         if not _VOICE_LISTEN.get(guild.id): return
         now=time.time()
-        if now - _VC_COOLDOWN.get(user_id, 0) < 4: return
+        if now - _VC_COOLDOWN.get(user_id, 0) < 2.5: return
         wav=_pcm_to_wav(pcm)
         if len(wav) > 4_000_000: return
         transcript=await _stt_first_try(wav)
         if not transcript:
             log.warning("STT transcript empty (koi boli samjh nahi aayi)")
             return
-        low=transcript.lower()
-        wake=None
-        for w in _WAKE_WORDS:
-            if w in low: wake=w; break
-        if wake is None: return
+        log.info("VC suna user %s: %s", user_id, transcript[:160])
+        wake_hit=_find_wake(transcript)
+        convo_key=(guild.id, user_id)
+        in_convo=time.time() < _VC_CONVO.get(convo_key, 0)
+        if not wake_hit and not in_convo:
+            log.info("VC: naam nahi suna gaya, jawab nahi diya")
+            return
         _VC_COOLDOWN[user_id]=time.time()
         sawal=transcript
-        idx=sawal.lower().find(wake)
-        if idx >= 0:
-            sawal=(sawal[:idx] + " " + sawal[idx+len(wake):]).strip(" ,.!?\n")
+        if wake_hit:
+            sawal=re.sub(_WAKE_PATTERN, " ", sawal, count=1, flags=re.IGNORECASE).strip(" ,.!?\n")
+        # ek baar naam lo, fir 90 second tak bina naam liye baat chalti rahegi (insaanon jaisi baat-cheet)
+        _VC_CONVO[convo_key]=time.time()+90
         ch=None
         chid=_VOICE_LISTEN_CH.get(guild.id)
         if chid:
@@ -2516,9 +2647,11 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
             try: member=guild.get_member(user_id)
             except Exception: pass
             naam=member.display_name if member else "friend"
-            prompt_vc=(f"You are NezukoHelper (Nezuko), ek sweet cute anime-girl assistant. {naam} ne VC me bola: {sawal[:1200]}. "
-                       "User ki bhasha me hi jawab do, bohut chhota (max 55 shabd), soft cute tone me.")
-            jawab=await _ask_pollinations(prompt_vc) or "Hmm, ye sawal thoda mushkil hai mere liye! Kuch aur poochho? 🌸"
+            prompt_vc=(f"{naam} tumse VC me ek dost ki tarah baat kar raha hai. Usne kaha: {sawal[:1200]}. "
+                       "bilkul naturally, jaise asli dost jawab deti hai — bohut chhota (1-2 vakya, max 40 shabd), user ki bhasha me hi.")
+            jawab=await _ask_ai_fast(prompt_vc, hist, timeout=13)
+            if not jawab or jawab.startswith("⚠️"):
+                jawab="Hmm, ek second ruko... kuch atak gaya, ek baar fir bolo na? 🌸"
             hist += [{"role": "user", "parts": [{"text": sawal[:1500]}]}, {"role": "model", "parts": [{"text": jawab[:1500]}]}]
             del hist[:-6]
         if ch is not None:
@@ -2623,6 +2756,7 @@ class _WakeSink(_voice_recv.AudioSink if _voice_recv is not None else object):
                 dur=len(buf) / (48000 * 2 * 2)
                 if now - last >= 0.9 and dur >= 0.6:
                     pcm=bytes(buf); self.buffers[uid]=bytearray(); self.last_seen.pop(uid, None)
+                    log.info("VC boli mili user %s (%.1f sec ki awaaz)", uid, dur)
                     asyncio.create_task(_handle_voice_utterance(self.guild, uid, pcm))
                 elif dur <= 0.3 and now - last >= 3:
                     self.buffers.pop(uid, None); self.last_seen.pop(uid, None)
