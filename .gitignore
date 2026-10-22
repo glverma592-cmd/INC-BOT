@@ -14,3 +14,6 @@ bot/tickets.json
 bot/reminders.json
 bot/economy.json
 bot/automod.json
+bot/welcome_off.json
+bot/warnings.json
+bot/profile_done.json

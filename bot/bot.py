@@ -178,6 +178,88 @@ async def on_tree_error(interaction: discord.Interaction, error: app_commands.Ap
     except Exception:
         pass
 
+_WELCOME_OFF_FILE = Path(__file__).resolve().parent / "welcome_off.json"
+def _load_welcome_off() -> set:
+    try:
+        return {int(x) for x in json.loads(_WELCOME_OFF_FILE.read_text(encoding="utf-8"))}
+    except Exception:
+        return set()
+_welcome_off: set = _load_welcome_off()
+def _save_welcome_off():
+    try:
+        _WELCOME_OFF_FILE.write_text(json.dumps(sorted(_welcome_off)), encoding="utf-8")
+    except Exception:
+        log.warning("welcome_off save fail\n%s", traceback.format_exc())
+def _welcome_enabled(guild_id) -> bool:
+    """Auto-welcome har server me bina command ke DEFAULT ON hai.
+    Sirf wahi band hai jaha admin ne /server welcome Off kiya ho."""
+    try:
+        return int(guild_id) not in _welcome_off
+    except Exception:
+        return True
+def _set_welcome(guild_id, on: bool):
+    try:
+        gid=int(guild_id)
+    except Exception:
+        return
+    if on: _welcome_off.discard(gid)
+    else: _welcome_off.add(gid)
+    _save_welcome_off()
+
+def _pick_welcome_channel(guild):
+    """Koi setup nahi — system channel, fir welcome/general naam wala,
+    fir pehla text channel jaha bot bol sakta hai."""
+    try:
+        me=guild.me
+        if me is None: return None
+        def bol_sakta(ch):
+            try:
+                if not isinstance(ch, discord.TextChannel): return False
+                p=ch.permissions_for(me)
+                return bool(p.view_channel and p.send_messages)
+            except Exception:
+                return False
+        sysch=getattr(guild, "system_channel", None)
+        if sysch is not None and bol_sakta(sysch): return sysch
+        channels=sorted(guild.text_channels, key=lambda c: c.position)
+        for shabd in ("welcome", "swagat", "general", "main", "chat", "lobby", "announcement"):
+            for ch in channels:
+                if shabd in ch.name.lower() and bol_sakta(ch): return ch
+        for ch in channels:
+            if bol_sakta(ch): return ch
+    except Exception:
+        pass
+    return None
+
+async def _send_auto_welcome(member) -> bool:
+    """Naya member -> server channel me apne aap welcome (zero setup)."""
+    try:
+        guild=member.guild
+        if guild is None or member.bot is True: return False
+        if not _welcome_enabled(guild.id): return False
+        ch=_pick_welcome_channel(guild)
+        if ch is None: return False
+        rules_ch=next((c for c in guild.text_channels if "rule" in c.name.lower()), None)
+        embed=discord.Embed(
+            title=f"🌸 {guild.name} me swagat hai!",
+            description=(f"Hey {member.mention}, **{guild.name}** ki family me tumhara dil se swagat hai! 💜\n\n"
+                         f"👥 Tum is server ke **#{guild.member_count}** member ho.\n"
+                         + (f"📜 Pehle {rules_ch.mention} padh lena.\n" if rules_ch is not None else "")
+                         + "💬 Koi help chahiye to chat me puch lo — aur `/help` se Nezu ke saare commands dekh sakte ho!"),
+            color=0xff6b9d)
+        try: embed.set_thumbnail(url=member.display_avatar.url)
+        except Exception: pass
+        if guild.icon:
+            try: embed.set_author(name=guild.name, icon_url=guild.icon.url)
+            except Exception: pass
+        embed.set_footer(text="Nezu • Auto-Welcome (bina setup ke khud chalta hai)")
+        await ch.send(content=f"🎉 Welcome {member.mention}!", embed=embed)
+        log.info("auto-welcome -> %s in %s (#%s)", member, guild.name, ch.name)
+        return True
+    except Exception:
+        log.warning("auto-welcome fail\n%s", traceback.format_exc())
+        return False
+
 @bot.event
 async def on_member_join(member: discord.Member):
     if member.bot and await _antinuke_check_bot_add(member):
@@ -197,17 +279,26 @@ async def on_member_join(member: discord.Member):
                 log.warning("autorole: %s ko %s nahi de paya — bot ka role upar rakho / Manage Roles chahiye", member, role.name)
             except Exception:
                 log.error("autorole fail\n%s", traceback.format_exc())
+    # Server channel me auto-welcome (koi command/setup nahi chahiye)
+    channel_welcome=False
+    if member.bot is not True:
+        channel_welcome=await _send_auto_welcome(member)
     text=DM_TEXT.format(user=member.mention, guild=member.guild.name, count=member.guild.member_count)
-    view=VerifyButton() if REQUIRE_VERIFY else None
+    # Verify button sirf tab lagao jab us server me verify-role sach me set/mila ho,
+    # warna member button dabata aur sirf error dikhta tha (zero-setup kharab hota tha)
+    _vrole=member.guild.get_role(VERIFY_ROLE_ID) if (VERIFY_ROLE_ID and member.guild) else None
+    view=VerifyButton() if (REQUIRE_VERIFY and _vrole is not None) else None
     try:
         await member.send(text, view=view)
         log.info("DM sent -> %s (%s)", member, member.id)
     except discord.Forbidden:
         log.warning("DM blocked by %s", member)
-        await _fallback_post(member, "DM nahi ja paya (user ne DM block kiya hai)")
+        if not channel_welcome:
+            await _fallback_post(member, "DM nahi ja paya (user ne DM block kiya hai)")
     except Exception:
         log.error("DM fail %s\n%s", member, traceback.format_exc())
-        await _fallback_post(member, "DM nahi ja paya")
+        if not channel_welcome:
+            await _fallback_post(member, "DM nahi ja paya")
 
 async def _fallback_post(member: discord.Member, reason: str = ""):
     if not WELCOME_CHANNEL_ID: return
@@ -2922,6 +3013,28 @@ async def server_verification(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Sirf server me.", ephemeral=True); return
     g=interaction.guild
     await interaction.response.send_message(f"🛡️ Verification level: **{str(g.verification_level).title()}** • Content filter: **{str(g.explicit_content_filter).title()}**", ephemeral=True)
+
+@server_group.command(name="welcome", description="Auto-welcome On/Off/Status (default: bina setup ke ON)")
+@app_commands.describe(action="On, Off ya Status")
+@app_commands.choices(action=[
+    app_commands.Choice(name="On — auto welcome chalu", value="on"),
+    app_commands.Choice(name="Off — auto welcome band", value="off"),
+    app_commands.Choice(name="Status — halat dekho", value="status"),
+])
+async def server_welcome(interaction: discord.Interaction, action: str = "status"):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Sirf server me chalta hai.", ephemeral=True); return
+    if action in ("on", "off") and not _is_admin(interaction):
+        await interaction.response.send_message("❌ Welcome On/Off sirf server **admins** kar sakte hai. (Waise ye default ON hi aata hai, kuch karne ki zaroorat nahi.)", ephemeral=True); return
+    if action == "on":
+        _set_welcome(interaction.guild.id, True)
+        await interaction.response.send_message("🌸 **Auto-Welcome ON!** Ab har naye member ko apne aap welcome milega — koi aur setup nahi chahiye.", ephemeral=True)
+    elif action == "off":
+        _set_welcome(interaction.guild.id, False)
+        await interaction.response.send_message("🌸 Auto-Welcome **OFF** kar diya hai is server ke liye.", ephemeral=True)
+    else:
+        halat="ON ✅ (default — bina setup ke chalta hai)" if _welcome_enabled(interaction.guild.id) else "OFF"
+        await interaction.response.send_message(f"🌸 Auto-Welcome is server me: **{halat}**", ephemeral=True)
 
 @server_group.command(name="features", description="Server ki khaas features (community, partner wagera)")
 async def server_features(interaction: discord.Interaction):

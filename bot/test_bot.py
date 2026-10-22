@@ -137,7 +137,8 @@ class TestBotCode(unittest.TestCase):
         member.send = fake_send
         await botmod.on_member_join(member)
         self.assertIn("G", sent["text"])
-        self.assertIsInstance(sent["view"], botmod.VerifyButton)
+        # VERIFY_ROLE_ID set nahi hai -> tuta hua button nahi jana chahiye (zero-setup)
+        self.assertIsNone(sent["view"])
         print("    DM text preview:", sent["text"].splitlines()[0])
 
     def _run(self, coro):
