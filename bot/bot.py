@@ -956,45 +956,29 @@ async def ask_cmd(interaction: discord.Interaction, sawal: str):
 
 # ---------------- VOICE CHAT (VC me Nezuko tumse baat karegi) ----------------
 async def _tts_bytes(text: str) -> bytes | None:
-    """Nezuko ki soft girl voice me text ko speech me badlo (Gemini TTS, phir edge-tts fallback)."""
+    """Nezuko ki soft girl voice me text ko speech banao — BINA gemini ke.
+    edge-tts (free) ki awaaz hi use hogi, koi key nahi chahiye."""
     saaf=re.sub(r"[*_`~#>\[\]()]", "", text or "").strip()
     saaf=re.sub(r"https?://\S+", "", saaf).strip()
     if not saaf: return None
     saaf=saaf[:600]
-    if GEMINI_API_KEY:
+    for awaaz in ("en-IN-NeerjaNeural", "hi-IN-SwaraNeural", "en-US-AnaNeural"):
         try:
-            payload={"contents": [{"parts": [{"text": saaf}]}], "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Leda"}}}}}
-            url="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent"
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=45)) as resp:
-                    if resp.status == 200:
-                        data=await resp.json()
-                        import base64 as _b64
-                        for cand in data.get("candidates", []):
-                            for part in cand.get("content", {}).get("parts", []):
-                                inline=part.get("inlineData") or {}
-                                if inline.get("data"):
-                                    return _b64.b64decode(inline["data"])
-                        log.warning("TTS: Gemini 200 par audio part nahi mila")
-                    else:
-                        log.warning("TTS Gemini HTTP %s", resp.status)
+            import io as _io
+            bio=_io.BytesIO()
+            def _edge_sync(awaaz=awaaz, bio=bio):
+                import edge_tts, asyncio as _aio
+                async def _run():
+                    comm=edge_tts.Communicate(saaf, voice=awaaz, rate="+4%", pitch="+14Hz")
+                    async for chunk in comm.stream():
+                        if chunk["type"] == "audio": bio.write(chunk["data"])
+                _aio.run(_run())
+            await asyncio.get_event_loop().run_in_executor(None, _edge_sync)
+            data=bio.getvalue()
+            if data: return data
         except Exception:
-            log.warning("TTS Gemini fail\n%s", traceback.format_exc())
-    try:
-        import io as _io
-        bio=_io.BytesIO()
-        def _edge_sync():
-            import edge_tts, asyncio as _aio
-            async def _run():
-                comm=edge_tts.Communicate(saaf, voice="en-IN-NeerjaNeural", rate="+6%", pitch="+12Hz")
-                async for chunk in comm.stream():
-                    if chunk["type"] == "audio": bio.write(chunk["data"])
-            _aio.run(_run())
-        await asyncio.get_event_loop().run_in_executor(None, _edge_sync)
-        data=bio.getvalue()
-        if data: return data
-    except Exception:
-        log.warning("TTS edge fail\n%s", traceback.format_exc())
+            log.warning("TTS edge fail (%s)\n%s", awaaz, traceback.format_exc())
+            continue
     return None
 
 def _tts_file(mp3_bytes: bytes) -> str:
@@ -2461,7 +2445,8 @@ async def _stt_first_try(wav_bytes: bytes) -> str:
         if t: return t
     except Exception:
         pass
-    return await _stt_gemini(wav_bytes)
+    # Gemini audio last me rakha tha — ab bilkul hata diya, sirf free hai
+    return ""
 
 def _stt_google_free(wav_bytes: bytes) -> str:
     """Fallback: SpeechRecognition + Google free STT (16kHz mono chahiye)."""
@@ -2531,7 +2516,9 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
             try: member=guild.get_member(user_id)
             except Exception: pass
             naam=member.display_name if member else "friend"
-            jawab=await _ask_gemini(f"{naam} ne VC me bola: {sawal[:1500]}. Short me jawab do (VC me bolna hai), max 60 shabd.", hist)
+            prompt_vc=(f"You are NezukoHelper (Nezuko), ek sweet cute anime-girl assistant. {naam} ne VC me bola: {sawal[:1200]}. "
+                       "User ki bhasha me hi jawab do, bohut chhota (max 55 shabd), soft cute tone me.")
+            jawab=await _ask_pollinations(prompt_vc) or "Hmm, ye sawal thoda mushkil hai mere liye! Kuch aur poochho? 🌸"
             hist += [{"role": "user", "parts": [{"text": sawal[:1500]}]}, {"role": "model", "parts": [{"text": jawab[:1500]}]}]
             del hist[:-6]
         if ch is not None:
