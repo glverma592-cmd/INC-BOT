@@ -3559,7 +3559,7 @@ async def _stt_gemini(wav_bytes: bytes) -> str:
     prompt=("Listen to this audio and transcribe EXACTLY what the person said "
             "(Hindi/Hinglish/English jaise bola hai waise hi). Return ONLY the transcript text.")
     payload={"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/wav", "data": _b64.b64encode(wav_bytes).decode()}}]}]}
-    for model in ["gemini-2.0-flash", "gemini-2.5-flash", GEMINI_MODEL, "gemini-3-flash-preview", "gemini-flash-latest"]:
+    for model in [GEMINI_MODEL, "gemini-flash-lite-latest", "gemini-3-flash-preview", "gemini-3.8-flash"]:
         if not model: continue
         try:
             url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
