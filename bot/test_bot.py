@@ -71,22 +71,28 @@ class TestBotCode(unittest.TestCase):
             self.assertEqual(r.status, 200)
             self.assertEqual((await r.json())["ok"], True)
 
-            # bad secret
-            r = await client.post("/github", json={"text": "x"},
-                                  headers={"X-Hub-Secret": "wrong"})
-            self.assertEqual(r.status, 401)
+            import hashlib as _hl, hmac as _hm
+            def _sign(body: bytes) -> str:
+                return "sha256=" + _hm.new(b"s3cret", body, _hl.sha256).hexdigest()
 
-            # bad json
-            r = await client.post("/github", data="not-json{{{",
-                                  headers={"X-Hub-Secret": "s3cret"})
+            # galat signature -> andar nahi
+            r = await client.post("/github", json={"text": "x"},
+                                  headers={"X-Hub-Signature-256": "sha256=galat"})
+            self.assertEqual(r.status, 403)
+
+            # sahi signature, par kharab json
+            _bad = b"not-json{{{"
+            r = await client.post("/github", data=_bad,
+                                  headers={"X-Hub-Signature-256": _sign(_bad)})
             self.assertEqual(r.status, 400)
 
-            # good secret, but bot logged in nahi -> channel nahi milega
-            r = await client.post("/github",
-                                  json={"text": "push to main", "title": "Push",
-                                        "channel_id": 1560004874580533338,
-                                        "event": "push"},
-                                  headers={"X-Hub-Secret": "s3cret"})
+            # sahi signature, but bot logged in nahi -> channel nahi milega
+            _good = json.dumps({"text": "push to main", "title": "Push",
+                                "channel_id": 1560004874580533338,
+                                "event": "push"}).encode()
+            r = await client.post("/github", data=_good,
+                                  headers={"X-Hub-Signature-256": _sign(_good),
+                                           "Content-Type": "application/json"})
             self.assertEqual(r.status, 404)
             body = await r.json()
             self.assertEqual(body["error"], "channel not found")

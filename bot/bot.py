@@ -63,6 +63,29 @@ BOT_OWNER_ID=int(os.environ.get("BOT_OWNER_ID","0") or 0)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 log=logging.getLogger("autodm")
 
+class _SecretFilter(logging.Filter):
+    """Suraksha jaal: token/API-key jaisi cheez galti se bhi log me aa jaye to taare (****) ban jayegi."""
+    _PATTERNS=(
+        r"AIza[0-9A-Za-z_\-]{10,}",
+        r"ghp_[0-9A-Za-z]{10,}",
+        r"[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{15,}",
+        r"(?i)(api[_\-]?key|token|secret|authorization)[\"']?\s*[=:]\s*[\"']?\S+",
+    )
+    def filter(self, record):
+        try:
+            _msg=record.getMessage()
+            _saaf=_msg
+            for _p in self._PATTERNS:
+                _saaf=re.sub(_p, "****", _saaf)
+            if _saaf != _msg:
+                record.msg=_saaf; record.args=()
+        except Exception: pass
+        return True
+logging.getLogger().addFilter(_SecretFilter())
+# Library ka faltu shor band — log me sirf kaam ki baat dikhegi
+for _noisy in ("discord.gateway", "discord.voice_state", "discord.client", "discord.http"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 _startup_dm_sent=False
 intents=discord.Intents.default()
 intents.members=True
@@ -4327,22 +4350,29 @@ async def autoplay_cmd(interaction: discord.Interaction, action: str = "status")
 
 # ---- GitHub -> Discord ----
 async def github_handler(request: web.Request):
-    if GITHUB_HOOK_SECRET and request.headers.get("X-Hub-Secret") != GITHUB_HOOK_SECRET:
-        return web.json_response({"error":"bad secret"}, status=401)
-    try: payload=await request.json()
+    # Secret set na ho to ye rasta band — bahar ka koi banda nakli message nahi bhej sakta
+    if not GITHUB_HOOK_SECRET:
+        return web.json_response({"error":"disabled"}, status=404)
+    import hmac as _hmac, hashlib as _hashlib
+    _body=await request.read()
+    _sig=request.headers.get("X-Hub-Signature-256", "")
+    _mac=_hmac.new(GITHUB_HOOK_SECRET.encode(), _body, _hashlib.sha256).hexdigest()
+    if not _sig.startswith("sha256=") or not _hmac.compare_digest(_sig[7:], _mac):
+        return web.json_response({"error":"bad signature"}, status=403)
+    try: payload=json.loads(_body.decode("utf-8") or "{}")
     except: return web.json_response({"error":"invalid json"}, status=400)
     channel_id=int(payload.get("channel_id") or 0)
-    text=str(payload.get("text") or "GitHub event")
-    title=str(payload.get("title") or "GitHub")
+    text=str(payload.get("text") or "Update")
+    title=str(payload.get("title") or "Update")
     url=str(payload.get("url") or "")
     color=int(payload.get("color") or 3447003)
     ch=bot.get_channel(channel_id) if channel_id else None
     if ch is None and WELCOME_CHANNEL_ID: ch=bot.get_channel(WELCOME_CHANNEL_ID)
     if ch is None: return web.json_response({"error":"channel not found"}, status=404)
     embed=discord.Embed(title=title, description=text, color=color, url=url or None)
-    embed.set_footer(text=f"github • {payload.get('event','webhook')}")
+    embed.set_footer(text=str(payload.get("event", "update")))
     await ch.send(embed=embed)
-    log.info("github -> #%s", ch)
+    log.info("webhook -> #%s", ch)
     return web.json_response({"ok":True, "channel":ch.id})
 
 async def start_http_server():
@@ -4351,12 +4381,12 @@ async def start_http_server():
     app.router.add_get("/health", lambda r: web.json_response({"ok":True}))
     runner=web.AppRunner(app); await runner.setup()
     site=web.TCPSite(runner,"0.0.0.0",HTTP_PORT); await site.start()
-    log.info("HTTP 0.0.0.0:%s (POST /github)", HTTP_PORT)
+    log.info("HTTP server chalu (port %s)", HTTP_PORT)
 
 def main():
     if not TOKEN: raise SystemExit("DISCORD_BOT_TOKEN set nahi hai. .env me daalo.")
     import asyncio
-    log.info("Bot start ho raha hai... token mila: haan (lambaai %s)", len(TOKEN))
+    log.info("Bot start ho raha hai...")
     async def _run():
         # HTTP (GitHub webhook) server fail ho jaye (port busy wagera) to bhi
         # bot online hona NAHI rukna chahiye — pehle yehi ek chhupa crash tha
