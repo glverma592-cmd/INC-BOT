@@ -3508,6 +3508,8 @@ _VC_REJOIN: dict[int, object] = {}
 _VC_REJOIN_TRIES: dict[int, list] = {}
 _vc_tasks: dict[int, asyncio.Task] = {}
 _VC_COOLDOWN: dict[int, float] = {}
+_VC_STYLE: dict[int, str] = {}
+_VC_SPEAKING: dict[int, bool] = {}
 _VC_PROCESSING: set = set()
 
 def _stereo_to_mono(pcm: bytes):
@@ -3784,6 +3786,10 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
             naam=member.display_name if member else "friend"
             prompt_vc=(f"{naam} tumse VC me ek dost ki tarah baat kar raha hai. Usne kaha: {sawal[:1200]}. "
                        "bilkul naturally, jaise asli dost jawab deti hai — bohut chhota (1-2 vakya, max 40 shabd), user ki bhasha me hi.")
+            if _VC_STYLE.get(guild.id) == "japanese":
+                prompt_vc=(f"{naam} tumse VC me baat kar raha hai. Usne kaha: {sawal[:1200]}. "
+                           "Tum ek pyaari si Japanese anime ladki ho — bohot naram, halki neend bhari aur khayal rakhne wale andaz me "
+                           "SIRF Japanese (日本語) me jawab do, bohot chhota (1-2 vakya). Kabhi kabhi shuru me 'んー…' jaisi naram awaaz bhi la sakti ho.")
             try:
                 jawab=await asyncio.wait_for(_ask_ai_fast(prompt_vc, hist, timeout=10), timeout=12)
             except Exception:
@@ -3817,6 +3823,7 @@ async def _speak_in_vc_asli(guild, text: str) -> bool:
             if vc.is_playing() or vc.is_paused():
                 vc.stop()
                 await asyncio.sleep(0.3)
+            _VC_SPEAKING[guild.id]=True
             done=asyncio.Event()
             def _cb(e, done=done):
                 try: bot.loop.call_soon_threadsafe(done.set)
@@ -3825,6 +3832,7 @@ async def _speak_in_vc_asli(guild, text: str) -> bool:
             try: await asyncio.wait_for(done.wait(), timeout=90)
             except Exception: pass
         finally:
+            _VC_SPEAKING[guild.id]=False
             try: os.remove(path)
             except Exception: pass
         if gaana_tha and st.get("queue"):
@@ -3852,6 +3860,7 @@ class _WakeSink(_voice_recv.AudioSink if _voice_recv is not None else object):
         self.started=time.time()
         self._decoders: dict[int, object] = {}
         self._badcount: dict[int, int] = {}
+        self._int_frames: dict[int, int] = {}
     def wants_opus(self) -> bool:
         # opus ham khud decode karenge taaki ek corrupted packet se
         # library ka sunne wala hissa crash na ho (OpusError fix)
@@ -3883,6 +3892,18 @@ class _WakeSink(_voice_recv.AudioSink if _voice_recv is not None else object):
                 except Exception: self._decoders.pop(uid, None)
                 return
             if not pcm: return
+            # Nezu bol rahi ho aur user bolna shuru kare (0.5 sec) -> woh khud ruk jayegi
+            try:
+                if _VC_SPEAKING.get(self.guild.id):
+                    _nf=self._int_frames.get(uid, 0) + 1
+                    self._int_frames[uid]=_nf
+                    if _nf >= 25:
+                        self._int_frames[uid]=0
+                        _vc=self.guild.voice_client
+                        if _vc is not None and _vc.is_playing(): _vc.stop()
+                else:
+                    self._int_frames[uid]=0
+            except Exception: pass
             buf=self.buffers.setdefault(uid, bytearray())
             buf.extend(pcm)
             self.last_seen[uid]=time.time()
@@ -4112,16 +4133,24 @@ async def _song_autocomplete(interaction: discord.Interaction, current: str):
         return []
 
 @bot.tree.command(name="vcchat", description="Nezuko ko bolo: naam leke bulaoge to VC me bolkar jawab degi")
-@app_commands.describe(action="On = sunna chalu Karo | Off = band | Status = state dekho")
-@app_commands.choices(action=[app_commands.Choice(name="On", value="on"), app_commands.Choice(name="Off", value="off"), app_commands.Choice(name="Status", value="status")])
+@app_commands.describe(action="On/Off/Status ya Style badlo")
+@app_commands.choices(action=[app_commands.Choice(name="On", value="on"), app_commands.Choice(name="Off", value="off"), app_commands.Choice(name="Status", value="status"), app_commands.Choice(name="Style: Japanese 🌸 (Japanese me pyara jawab)", value="style_japanese"), app_commands.Choice(name="Style: Sweet (default, user ki bhasha)", value="style_sweet")])
 async def vcchat_cmd(interaction: discord.Interaction, action: str = "on"):
     if interaction.guild is None:
         await interaction.response.send_message("❌ Ye server me hi chalega.", ephemeral=True); return
     act=(action or "on").lower().strip()
     guild=interaction.guild
+    if act in ("style_japanese", "style_sweet"):
+        _VC_STYLE[guild.id]="japanese" if act == "style_japanese" else "sweet"
+        _lbl="Japanese 🌸 (sirf Japanese me, naram pyara andaz)" if act == "style_japanese" else "Sweet (default — user ki apni bhasha me)"
+        await interaction.response.send_message(f"🎧 VC style set ho gaya: **{_lbl}**\n(Sunna chalu ho to style abhi se lagega.)", ephemeral=True)
+        if _VOICE_LISTEN.get(guild.id):
+            asyncio.create_task(_speak_in_vc(guild, "こんにちは、ネズだよ。これからは日本語で、ゆっくりお話ししようね。" if act == "style_japanese" else "Thik hai, ab mai tumhari bhasha me baat karungi!"))
+        return
     if act == "status":
         halat="ON 🎙️" if _VOICE_LISTEN.get(guild.id) else "OFF"
-        await interaction.response.send_message(f"🎧 Nezuko VC me sunn rahi hai: **{halat}**\n(On ho to bolo: **'Nezuko, kya kar rahi ho?'** — jawab awaaz me ayega!)", ephemeral=True); return
+        _styl="Japanese 🌸" if _VC_STYLE.get(guild.id) == "japanese" else "Sweet"
+        await interaction.response.send_message(f"🎧 Nezuko VC me sunn rahi hai: **{halat}** • Style: **{_styl}**\n(On ho to bolo: **'Nezuko, kya kar rahi ho?'** — jawab awaaz me ayega!)", ephemeral=True); return
     if act == "off":
         _stop_listening(guild)
         await interaction.response.send_message("🔇 Nezuko ne VC me sunna band kar diya.", ephemeral=True); return
@@ -4131,7 +4160,7 @@ async def vcchat_cmd(interaction: discord.Interaction, action: str = "on"):
     ok, wajah=_start_listening(guild, interaction.channel.id)
     if ok:
         await interaction.response.send_message("🎙️ **Nezuko sun rahi hai!** Ab VC me bolo:\n> **'Nezuko, kya Kar rahi ho?'**\nWo naam sunkar bolkar jawab degi 🌸\n_(Har baat se pehle naam lazmi lo; bina naam ke wo reply nahi karegi.)_")
-        asyncio.create_task(_speak_in_vc(guild, "Haa, mai aa gayi hu aur sun rahi hu. Bolo, kya baat hai?"))
+        asyncio.create_task(_speak_in_vc(guild, "こんにちは、ネズだよ。ゆっくりお話ししようね。" if _VC_STYLE.get(guild.id) == "japanese" else "Haa, mai aa gayi hu aur sun rahi hu. Bolo, kya baat hai?"))
     elif wajah == "opus_missing":
         await interaction.response.send_message("⚠️ Termux me `pkg install -y libopus opusfile` karke bot restart Karo, fir `/vcchat On` Karo.", ephemeral=True)
     else:
