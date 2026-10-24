@@ -2978,6 +2978,141 @@ async def tools_unit(interaction: discord.Interaction, kind: app_commands.Choice
 async def tools_coinamount(interaction: discord.Interaction, amount: app_commands.Range[int, 0, 1000000000]):
     await interaction.response.send_message(f"🪙 **{amount:,}** coins" + (" — lakhpati! 🎉" if amount >= 100000 else " — badhte raho! 💪"), ephemeral=True)
 
+# ---------- YouTube (owner-only, /tools ke andar — naya top-level nahi) ----------
+# Token code/repo me NAHI hai: Termux ki safe file se padha jata hai.
+# Path badalna ho to .env me YT_TOKEN_FILE de sakte ho.
+_YT_SCOPES=[
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/yt-analytics.readonly",
+]
+def _yt_service():
+    import os as _os
+    token_file=_os.path.expanduser(_os.environ.get("YT_TOKEN_FILE", "~/.config/yt-agent/token.json"))
+    if not _os.path.exists(token_file):
+        raise RuntimeError("YouTube login nahi mila. Pehle Termux me youtube_oauth.py chalakar channel connect Karo.")
+    try:
+        from google.auth.transport.requests import Request as _Req
+        from google.oauth2.credentials import Credentials as _Creds
+        from googleapiclient.discovery import build as _build
+    except Exception:
+        raise RuntimeError("YouTube libraries install nahi hai. Termux me setup dobara chalao (requirements update).")
+    creds=_Creds.from_authorized_user_file(token_file, _YT_SCOPES)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(_Req())
+        Path(token_file).write_text(creds.to_json(), encoding="utf-8")
+        try: _os.chmod(token_file, 0o600)
+        except Exception: pass
+    return _build("youtube", "v3", credentials=creds)
+def _yt_channel(yt):
+    items=yt.channels().list(part="snippet,statistics,contentDetails", mine=True).execute().get("items", [])
+    if not items: raise RuntimeError("Channel nahi mila — sahi Gmail se dobara connect Karo.")
+    return items[0]
+def _yt_report_sync():
+    yt=_yt_service(); ch=_yt_channel(yt); st=ch["statistics"]
+    lines=[f"📺 **{ch['snippet']['title']}**",
+           f"👥 Subscribers: **{'hidden' if st.get('hiddenSubscriberCount') else st.get('subscriberCount')}**",
+           f"👀 Total views: **{st.get('viewCount')}**",
+           f"🎬 Total videos: **{st.get('videoCount')}**"]
+    uploads=ch["contentDetails"]["relatedPlaylists"]["uploads"]
+    items=yt.playlistItems().list(part="contentDetails", playlistId=uploads, maxResults=5).execute().get("items", [])
+    ids=[i["contentDetails"]["videoId"] for i in items]
+    if ids:
+        lines.append("\n**Last 5 videos:**")
+        vids=yt.videos().list(part="snippet,statistics", id=",".join(ids)).execute().get("items", [])
+        for i, v in enumerate(vids, 1):
+            vs=v["statistics"]
+            lines.append(f"{i}. {v['snippet']['title'][:80]} — 👁️ {vs.get('viewCount', 0)} • ❤️ {vs.get('likeCount', 0)}")
+    return "\n".join(lines)
+def _yt_videos_sync():
+    yt=_yt_service(); ch=_yt_channel(yt)
+    uploads=ch["contentDetails"]["relatedPlaylists"]["uploads"]
+    items=yt.playlistItems().list(part="contentDetails", playlistId=uploads, maxResults=10).execute().get("items", [])
+    ids=[i["contentDetails"]["videoId"] for i in items]
+    if not ids: return "koi video nahi mili."
+    vids=yt.videos().list(part="snippet,statistics,status", id=",".join(ids)).execute().get("items", [])
+    lines=[f"🎬 **{ch['snippet']['title']} — Latest videos:**"]
+    for i, v in enumerate(vids, 1):
+        vs=v["statistics"]
+        lines.append(f"{i}. [{v['status']['privacyStatus']}] {v['snippet']['title'][:80]} — 👁️ {vs.get('viewCount', 0)}")
+    return "\n".join(lines)
+def _yt_comments_sync():
+    import html as _html, re as _re
+    yt=_yt_service(); ch=_yt_channel(yt)
+    resp=yt.commentThreads().list(part="snippet", allThreadsRelatedToChannelId=ch["id"], maxResults=10, order="time").execute()
+    items=resp.get("items", [])
+    if not items: return "💬 koi comment nahi mila."
+    lines=["💬 **Latest comments:**"]
+    for i, it in enumerate(items, 1):
+        c=it["snippet"]["topLevelComment"]["snippet"]
+        txt=_html.unescape(_re.sub(r"<[^>]+>", " ", c.get("textDisplay") or "")).strip()
+        lines.append(f"{i}. **{c.get('authorDisplayName')}**: {txt[:120]}")
+    return "\n".join(lines)
+def _yt_upload_sync(file_path, title, description, privacy):
+    from googleapiclient.http import MediaFileUpload as _MFU
+    yt=_yt_service()
+    body={"snippet": {"title": title, "description": description or "", "categoryId": "20"},
+          "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}}
+    media=_MFU(file_path, chunksize=8*1024*1024, resumable=True)
+    req=yt.videos().insert(part="snippet,status", body=body, media_body=media, notifySubscribers=False)
+    resp=None
+    while resp is None:
+        _status, resp=req.next_chunk()
+    return resp["id"], privacy
+async def _yt_owner_gate(interaction: discord.Interaction) -> bool:
+    if interaction.user.id != await _get_bot_owner_id():
+        await interaction.response.send_message("❌ YouTube commands sirf bot owner ke liye hai.", ephemeral=True)
+        return False
+    return True
+
+@tools_group.command(name="youtube_report", description="Apne YouTube channel ki report (sirf owner)")
+async def tools_youtube_report(interaction: discord.Interaction):
+    if not await _yt_owner_gate(interaction): return
+    await interaction.response.defer(ephemeral=True)
+    try: txt=await asyncio.to_thread(_yt_report_sync)
+    except Exception as e: txt=f"❌ YouTube report fail: {e}"
+    await interaction.followup.send(txt[:1900], ephemeral=True)
+
+@tools_group.command(name="youtube_videos", description="YouTube ki latest videos ki list (sirf owner)")
+async def tools_youtube_videos(interaction: discord.Interaction):
+    if not await _yt_owner_gate(interaction): return
+    await interaction.response.defer(ephemeral=True)
+    try: txt=await asyncio.to_thread(_yt_videos_sync)
+    except Exception as e: txt=f"❌ Videos list fail: {e}"
+    await interaction.followup.send(txt[:1900], ephemeral=True)
+
+@tools_group.command(name="youtube_comments", description="YouTube ke latest comments (sirf owner)")
+async def tools_youtube_comments(interaction: discord.Interaction):
+    if not await _yt_owner_gate(interaction): return
+    await interaction.response.defer(ephemeral=True)
+    try: txt=await asyncio.to_thread(_yt_comments_sync)
+    except Exception as e: txt=f"❌ Comments fail: {e}"
+    await interaction.followup.send(txt[:1900], ephemeral=True)
+
+@tools_group.command(name="youtube_upload", description="Discord se video YouTube par upload Karo (sirf owner)")
+@app_commands.describe(video="Video file (max 100MB)", title="Video ka title (na do to file ka naam)", description="Video description", privacy="Private/Unlisted/Public")
+@app_commands.choices(privacy=[
+    app_commands.Choice(name="Private — sirf mujhe dikhe", value="private"),
+    app_commands.Choice(name="Unlisted — link walo ko dikhe", value="unlisted"),
+    app_commands.Choice(name="Public — sabko dikhe", value="public"),
+])
+async def tools_youtube_upload(interaction: discord.Interaction, video: discord.Attachment, title: str = "", description: str = "", privacy: str = "private"):
+    if not await _yt_owner_gate(interaction): return
+    if video.size > 100*1024*1024:
+        await interaction.response.send_message("❌ File 100MB se badi hai. Chhoti file do, ya Termux wala helper use Karo.", ephemeral=True); return
+    await interaction.response.defer(ephemeral=True)
+    import tempfile as _tf
+    fd, tmp=_tf.mkstemp(prefix="ytup_", suffix=Path(video.filename).suffix or ".mp4"); os.close(fd)
+    try:
+        await video.save(tmp)
+        vid, priv=await asyncio.to_thread(_yt_upload_sync, tmp, (title or Path(video.filename).stem)[:100], description, privacy)
+        await interaction.followup.send(f"✅ **YouTube upload complete!** ({priv})\n🔗 https://youtu.be/{vid}", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Upload fail: {e}", ephemeral=True)
+    finally:
+        try: os.unlink(tmp)
+        except Exception: pass
+
 # ---------- /text (10) ----------
 @text_group.command(name="reverse", description="Text ulta Karo")
 @app_commands.describe(text="Konsa text")

@@ -6,3 +6,5 @@ edge-tts>=7.0
 davey>=0.1
 discord-ext-voice-recv>=0.5
 SpeechRecognition>=3.10
+google-auth-oauthlib>=1.2.0
+google-api-python-client>=2.100.0
