@@ -1318,6 +1318,7 @@ _memory: dict[tuple[int, int], list] = {}
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot: return
+    if await _handle_yt_natural(message): return
     await _process_afk_message(message)
     if await _check_antilink(message):
         return
@@ -3088,6 +3089,55 @@ async def tools_youtube_comments(interaction: discord.Interaction):
     try: txt=await asyncio.to_thread(_yt_comments_sync)
     except Exception as e: txt=f"❌ Comments fail: {e}"
     await interaction.followup.send(txt[:1900], ephemeral=True)
+
+def _yt_natural_action(content: str, bot_user_id=None):
+    text=(content or "").strip()
+    if bot_user_id:
+        text=text.replace(f"<@{bot_user_id}>", "").replace(f"<@!{bot_user_id}>", "")
+    norm=" ".join(text.lower().split())
+    if norm in ("yt report", "youtube report", "yt channel report", "youtube channel report"):
+        return ("report", "")
+    if norm in ("yt videos", "youtube videos", "yt latest videos", "youtube latest videos", "yt video list"):
+        return ("videos", "")
+    if norm in ("yt comments", "youtube comments", "yt latest comments", "youtube latest comments"):
+        return ("comments", "")
+    for pre in ("yt upload", "youtube upload"):
+        if norm == pre or norm.startswith(pre + " "):
+            return ("upload", text[len(pre):].strip(" -:"))
+    return (None, "")
+
+async def _handle_yt_natural(message: discord.Message) -> bool:
+    action, title=_yt_natural_action(message.content, bot.user.id if bot.user else None)
+    if action is None: return False
+    if message.author.id != await _get_bot_owner_id(): return False
+    if action == "upload":
+        if not message.attachments:
+            await message.reply("🎬 Video file attach karke caption me `yt upload Title` likho — private upload hoga.", mention_author=False)
+            return True
+        att=message.attachments[0]
+        if att.size > 100*1024*1024:
+            await message.reply("❌ File 100MB se badi hai.", mention_author=False); return True
+        soch=await message.reply("⏫ YouTube par private upload ho raha hai...", mention_author=False)
+        import tempfile as _tf
+        fd, tmp=_tf.mkstemp(prefix="ytup_", suffix=Path(att.filename).suffix or ".mp4"); os.close(fd)
+        try:
+            await att.save(tmp)
+            vid, priv=await asyncio.to_thread(_yt_upload_sync, tmp, (title or Path(att.filename).stem)[:100], "", "private")
+            await soch.edit(content=f"✅ **YouTube upload complete!** ({priv})\n🔗 https://youtu.be/{vid}")
+        except Exception as e:
+            await soch.edit(content=f"❌ Upload fail: {e}")
+        finally:
+            try: os.unlink(tmp)
+            except Exception: pass
+        return True
+    fn={"report": _yt_report_sync, "videos": _yt_videos_sync, "comments": _yt_comments_sync}[action]
+    soch=await message.reply("📺 YouTube se data la rahi hoon...", mention_author=False)
+    try:
+        txt=await asyncio.to_thread(fn)
+    except Exception as e:
+        txt=f"❌ Fail: {e}"
+    await soch.edit(content=txt[:1900])
+    return True
 
 @tools_group.command(name="youtube_upload", description="Discord se video YouTube par upload Karo (sirf owner)")
 @app_commands.describe(video="Video file (max 100MB)", title="Video ka title (na do to file ka naam)", description="Video description", privacy="Private/Unlisted/Public")
