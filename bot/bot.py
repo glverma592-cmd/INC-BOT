@@ -3066,6 +3066,27 @@ async def _yt_owner_gate(interaction: discord.Interaction) -> bool:
         return False
     return True
 
+def _bot_health_text():
+    sec=int(time.time()-START_TIME); d,sec=divmod(sec,86400); h,sec=divmod(sec,3600); m,sec=divmod(sec,60)
+    uptime=(f"{d}d " if d else "") + f"{h}h {m}m {sec}s"
+    import math as _math
+    _lat = bot.latency if bot.latency is not None else 0
+    ping_ms = round(_lat*1000) if _math.isfinite(_lat) else 0
+    import os as _os
+    token_file=_os.path.expanduser(_os.environ.get("YT_TOKEN_FILE", "~/.config/yt-agent/token.json"))
+    yt_ok = _os.path.exists(token_file) and _os.path.getsize(token_file) > 0
+    return (f"🟢 **Nezu online hai!**\n"
+            f"⏱️ Uptime: **{uptime}**\n"
+            f"📡 Ping: **{ping_ms} ms**\n"
+            f"🏠 Servers: **{len(bot.guilds)}**\n"
+            f"📺 YouTube: **{'Connected ✅' if yt_ok else 'Not connected ❌'}**\n"
+            f"💾 Hosting: Termux (phone)")
+
+@tools_group.command(name="health", description="Bot ki health: uptime, ping, YouTube connect hai ya nahi (sirf owner)")
+async def tools_health(interaction: discord.Interaction):
+    if not await _yt_owner_gate(interaction): return
+    await interaction.response.send_message(_bot_health_text(), ephemeral=True)
+
 @tools_group.command(name="youtube_report", description="Apne YouTube channel ki report (sirf owner)")
 async def tools_youtube_report(interaction: discord.Interaction):
     if not await _yt_owner_gate(interaction): return
@@ -3095,6 +3116,8 @@ def _yt_natural_action(content: str, bot_user_id=None):
     if bot_user_id:
         text=text.replace(f"<@{bot_user_id}>", "").replace(f"<@!{bot_user_id}>", "")
     norm=" ".join(text.lower().split())
+    if norm in ("bot health", "bot status", "nezu health", "nezu status", "health"):
+        return ("health", "")
     if norm in ("yt report", "youtube report", "yt channel report", "youtube channel report"):
         return ("report", "")
     if norm in ("yt videos", "youtube videos", "yt latest videos", "youtube latest videos", "yt video list"):
@@ -3129,6 +3152,9 @@ async def _handle_yt_natural(message: discord.Message) -> bool:
         finally:
             try: os.unlink(tmp)
             except Exception: pass
+        return True
+    if action == "health":
+        await message.reply(_bot_health_text(), mention_author=False)
         return True
     fn={"report": _yt_report_sync, "videos": _yt_videos_sync, "comments": _yt_comments_sync}[action]
     soch=await message.reply("📺 YouTube se data la rahi hoon...", mention_author=False)
