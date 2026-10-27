@@ -2972,6 +2972,14 @@ class AllNukeConfirmView(discord.ui.View):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("❌ This confirmation is only for the bot owner.", ephemeral=True)
             return False
+        # Confirm dabane ke time bhi double-check: sirf BOT OWNER + usi server ka OWNER.
+        try:
+            bot_owner=await _get_bot_owner_id()
+        except Exception:
+            bot_owner=0
+        if interaction.user.id != bot_owner or interaction.guild is None or interaction.guild.owner_id != interaction.user.id:
+            await interaction.response.send_message("❌ Blocked: All Nuke only runs when the bot owner uses it in their own server.", ephemeral=True)
+            return False
         return True
 
     @discord.ui.button(label="YES, ALL NUKE", style=discord.ButtonStyle.danger, emoji="💥")
