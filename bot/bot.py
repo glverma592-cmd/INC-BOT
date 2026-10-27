@@ -429,19 +429,19 @@ def _help_command_total() -> int:
 _HELP_CATEGORIES={
     "utility": ("⚡", "Utility", "⚡ Utility Commands",
         "`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo` `/roles` `/banner` `/channelinfo` `/emojiinfo`\n\n"
-        "**/tools**: timestamp, snowflake, uuid, random, b64encode, b64decode, sha256, binary, hex, unit, coinamount, health, ticketpanel, youtube\n"
+        "**/tools**: timestamp, snowflake, uuid, random, b64encode, b64decode, sha256, binary, hex, unit, coinamount, health, ticketpanel, youtube, embed\n"
         "**/text**: reverse, upper, lower, title, count, repeat, spoiler, mock, vowels, slug\n\n"
         "`/calc` `/qr` `/color` `/password` `/invite` `/support`"),
     "fun": ("😄", "Fun", "😄 Fun Commands",
         "**/actions** (with GIFs): hug, pat, slap, wave, highfive, dance, cry, laugh, angry, sleep, eat, thumbsup\n\n"
-        "**/games**: trivia, trivia_answer, riddle, riddle_answer, scramble, scramble_guess, mathquiz, math_answer, numberguess, guess, slots, **royale**\n\n"
+        "**/games**: trivia, trivia_answer, riddle, riddle_answer, scramble, scramble_guess, mathquiz, math_answer, numberguess, guess, slots, **royale**, **idp**\n\n"
         "`/coinflip` `/dice` `/choose` `/eightball` `/rps` `/joke` `/fact` `/quote` `/afk` `/snipe` `/timer`"),
     "mod": ("🛡️", "Mod & Protect", "🛡️ Mod & Protect Commands",
         "`/kick` `/ban` `/unban` `/timeout` `/untimeout` `/warn` `/warnings` `/clearwarn` `/clear` `/slowmode` `/lock` `/unlock`\n\n"
         "`/role_add` `/role_remove` `/nickname` `/autorole_bot_add` `/autorole_bot_remove` `/autorole_bot_status` `/setmodlog`\n\n"
-        "**Protection:** `/antilink` `/antispam` `/badwords` `/antiraid` `/antinuke` `/nuke` `/lockdown` `/quarantine` `/unquarantine` `/purge` `/allnuke` (owner only)"),
+        "**Manage everything in one command:** `/server settings` — Welcome, AntiLink, AntiSpam, BadWords, AntiRaid and AntiNuke with Status / On / Off\n**Reports:** `/report` for members, `/server reports` for moderators\n**Scrims:** `/server scrims` — create scrims, reserve slots and post slot lists\n**Protection:** `/antilink` `/antispam` `/badwords` `/antiraid` `/antinuke` `/nuke` `/lockdown` `/quarantine` `/unquarantine` `/purge` `/allnuke` (owner only)"),
     "economy": ("💰", "Economy", "💰 Economy Commands",
-        "`/balance` `/daily` `/pay` `/gamble` `/rank` `/leaderboard`\n\n"
+        "`/balance` `/daily` `/pay` `/gamble` `/rank` `/leaderboard` `/server badge`\n\n"
         "**/games slots** — bet Nezu Coins on the slot machine\n"
         "`/giveaway` — admin/mod giveaway\n"
         "`/remind` `/reminders` `/remind_cancel` — reminders"),
@@ -1579,12 +1579,28 @@ async def image_cmd(interaction: discord.Interaction, vivaran: str):
 @bot.tree.command(name="report", description="Report a member to the admins")
 @app_commands.describe(member="Who are you reporting?", reason="What did they do wrong?")
 async def report(interaction: discord.Interaction, member: discord.Member, reason: str):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Reports work only inside a server.", ephemeral=True); return
+    rid=0
+    try:
+        bucket=_reports.setdefault(str(interaction.guild.id), {"next_id": 1, "items": []})
+        rid=int(bucket.get("next_id", 1)); bucket["next_id"]=rid+1
+        bucket.setdefault("items", []).append({"id": rid, "member_id": member.id, "reporter_id": interaction.user.id, "reason": str(reason)[:800], "resolved": False, "created_at": datetime.datetime.now(datetime.timezone.utc).timestamp()})
+        _save_reports()
+    except Exception:
+        log.warning("report save fail\n%s", traceback.format_exc())
     embed=discord.Embed(title="🚨 New Report", color=0xe74c3c)
+    embed.add_field(name="Report ID", value=f"#{rid}", inline=True)
     embed.add_field(name="Reported member", value=member.mention, inline=True)
     embed.add_field(name="Reported by", value=interaction.user.mention, inline=True)
     embed.add_field(name="Reason", value=reason, inline=False)
-    await interaction.channel.send(embed=embed)
-    await interaction.response.send_message("✅ Report admin tak bhej di.", ephemeral=True)
+    # Mod-log set hai to report waha jayegi; nahi hai to saved rahegi aur /server reports se milegi.
+    try:
+        ch_id=_automod.get(str(interaction.guild.id), {}).get("modlog_channel")
+        ch=interaction.guild.get_channel(int(ch_id)) if ch_id else None
+        if ch is not None: await ch.send(embed=embed)
+    except Exception: pass
+    await interaction.response.send_message(f"✅ Report saved. Report ID: **#{rid}** — admins can review it with `/server reports`.", ephemeral=True)
 
 _summarize_cooldown: dict[int, float] = {}
 
@@ -3035,7 +3051,7 @@ async def tools_timestamp(interaction: discord.Interaction, minutes: app_command
     ts=int(time.time()) + minutes*60
     await interaction.response.send_message(f"🕒 <t:{ts}:F>\nCode: `<t:{ts}:F>` • Relative: `<t:{ts}:R>`", ephemeral=True)
 
-@tools_group.command(name="snowflake", description="Discord ID se uski date/time nikalo")
+@tools_group.command(name="snowflake", description="Get the creation date/time from a Discord ID")
 @app_commands.describe(user_id="Discord ID (user/channel/message)")
 async def tools_snowflake(interaction: discord.Interaction, user_id: str):
     try: dt=discord.utils.snowflake_time(int(str(user_id).strip()))
@@ -3373,6 +3389,29 @@ async def tools_youtube(interaction: discord.Interaction, action: str = "status"
         txt=f"❌ Fail: {e}"
     await interaction.followup.send(txt[:1900], ephemeral=True)
 
+
+@tools_group.command(name="embed", description="Create and send a clean embed message to a channel (mods only)")
+@app_commands.describe(title="Embed title", description="Embed text", channel="Channel to send it in (blank = this channel)", color="Embed color")
+@app_commands.choices(color=[
+    app_commands.Choice(name="Purple", value="purple"), app_commands.Choice(name="Blue", value="blue"),
+    app_commands.Choice(name="Green", value="green"), app_commands.Choice(name="Gold", value="gold"),
+    app_commands.Choice(name="Red", value="red"), app_commands.Choice(name="Pink", value="pink"),
+])
+async def tools_embed(interaction: discord.Interaction, title: str, description: str, channel: discord.TextChannel = None, color: str = "purple"):
+    if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
+        await interaction.response.send_message("❌ This only works inside a server text channel.", ephemeral=True); return
+    if not _is_mod(interaction):
+        await _deny(interaction); return
+    ch=channel or interaction.channel
+    colors={"purple":0x9b59b6,"blue":0x3498db,"green":0x2ecc71,"gold":0xf1c40f,"red":0xe74c3c,"pink":0xff6b9d}
+    embed=discord.Embed(title=str(title)[:256], description=str(description)[:3900], color=colors.get(color, 0x9b59b6))
+    embed.set_footer(text=f"Posted by {interaction.user.display_name}")
+    try:
+        await ch.send(embed=embed)
+    except discord.Forbidden:
+        await interaction.response.send_message(f"❌ I cannot send messages in {ch.mention}.", ephemeral=True); return
+    await interaction.response.send_message(f"✅ Embed sent to {ch.mention}.", ephemeral=True)
+
 # ---------- /text (10) ----------
 @text_group.command(name="reverse", description="Reverse text")
 @app_commands.describe(text="Which text?")
@@ -3397,7 +3436,7 @@ async def text_title(interaction: discord.Interaction, text: str):
 @text_group.command(name="count", description="Count letters, words and lines in text")
 @app_commands.describe(text="Which text should be counted?")
 async def text_count(interaction: discord.Interaction, text: str):
-    await interaction.response.send_message(f"🔢 Letters: **{len(text)}** • Shabd: **{len(text.split())}** • Lines: **{len(text.splitlines()) or 1}**", ephemeral=True)
+    await interaction.response.send_message(f"🔢 Letters: **{len(text)}** • Words: **{len(text.split())}** • Lines: **{len(text.splitlines()) or 1}**", ephemeral=True)
 
 @text_group.command(name="repeat", description="Repeat text multiple times")
 @app_commands.describe(text="Which text?", times="How many times? (1-10)")
@@ -3464,6 +3503,62 @@ for _action_name, _action_line in [
     ("sleep", "went off to sleep — good night!"), ("eat", "sat down to eat together!"), ("thumbsup", "gave a thumbs up — great job!"),
 ]:
     _reg_action(_action_name, _action_line)
+
+# ---------- Scrims + Reports storage (Quo-style useful tools) ----------
+_SCRIMS_FILE = Path(__file__).resolve().parent / "scrims.json"
+_REPORTS_FILE = Path(__file__).resolve().parent / "reports.json"
+def _load_json_dict(path):
+    try:
+        data=json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+_scrims: dict = _load_json_dict(_SCRIMS_FILE)
+_reports: dict = _load_json_dict(_REPORTS_FILE)
+def _save_scrims():
+    try: _SCRIMS_FILE.write_text(json.dumps(_scrims), encoding="utf-8")
+    except Exception: log.warning("scrims save fail\n%s", traceback.format_exc())
+def _save_reports():
+    try: _REPORTS_FILE.write_text(json.dumps(_reports), encoding="utf-8")
+    except Exception: log.warning("reports save fail\n%s", traceback.format_exc())
+def _scrim_bucket(guild_id: int) -> dict:
+    return _scrims.setdefault(str(guild_id), {"next_id": 1, "items": {}})
+def _report_bucket(guild_id: int) -> dict:
+    return _reports.setdefault(str(guild_id), {"next_id": 1, "items": []})
+def _find_scrim(guild_id: int, scrim_id: int):
+    return _scrim_bucket(guild_id).setdefault("items", {}).get(str(int(scrim_id or 0)))
+def _member_badges(guild, member) -> list:
+    badges=[]
+    try:
+        if getattr(member, "bot", False): badges.append("🤖 Bot Account")
+        perms=getattr(member, "guild_permissions", None)
+        if perms and perms.administrator: badges.append("👑 Administrator")
+        elif perms and (perms.manage_guild or perms.kick_members or perms.ban_members): badges.append("🛡️ Moderator")
+        if getattr(member, "premium_since", None): badges.append("🚀 Server Booster")
+        joined=getattr(member, "joined_at", None)
+        if joined:
+            days=max(0, int((datetime.datetime.now(datetime.timezone.utc)-joined).total_seconds()//86400))
+            if days >= 730: badges.append("🏆 OG Member (2+ years)")
+            elif days >= 365: badges.append("🎖️ Veteran Member (1+ year)")
+            elif days >= 30: badges.append("🌱 Rising Member (30+ days)")
+            else: badges.append("✨ New Member")
+        rec=_levels.get(str(guild.id), {}).get(str(member.id), {}) if guild else {}
+        level, _, _=_level_progress(int(rec.get("xp", 0)))
+        if level >= 10: badges.append("⭐ Legend Chatter (Level 10+)")
+        elif level >= 5: badges.append("🔥 Super Active (Level 5+)")
+        elif level >= 3: badges.append("💬 Active Chatter (Level 3+)")
+        eco=_eco_rec(guild.id, member.id) if guild else {"coins": 0}
+        coins=int(eco.get("coins", 0))
+        if coins >= 10000: badges.append("💎 Coin Millionaire (10k+ coins)")
+        elif coins >= 1000: badges.append("💰 Rich Member (1k+ coins)")
+        elif coins >= 250: badges.append("🪙 Coin Saver (250+ coins)")
+        for item in _scrim_bucket(guild.id).get("items", {}).values():
+            if str(member.id) in [str(v) for v in item.get("reservations", {}).values()]:
+                badges.append("🎮 Scrim Player")
+                break
+    except Exception:
+        log.warning("badge calc fail\n%s", traceback.format_exc())
+    return badges or ["🌟 Starter Badge"]
 
 # ---------- /server (12) ----------
 def _server_lazmi(interaction):
@@ -3598,6 +3693,220 @@ async def server_features(interaction: discord.Interaction):
     txt=", ".join(f"`{f}`" for f in feats) if feats else "no special features"
     await interaction.response.send_message(f"✨ **Features:** {txt}"[:1900], ephemeral=True)
 
+
+@server_group.command(name="settings", description="Server settings in one place: Status, On or Off for protection and welcome features")
+@app_commands.describe(setting="Which setting?", action="Status, On or Off")
+@app_commands.choices(setting=[
+    app_commands.Choice(name="Welcome — automatic member welcome", value="welcome"),
+    app_commands.Choice(name="AntiLink — delete links", value="antilink"),
+    app_commands.Choice(name="AntiSpam — delete flood/spam", value="antispam"),
+    app_commands.Choice(name="BadWords — abusive-word filter", value="badwords"),
+    app_commands.Choice(name="AntiRaid — mass-join alerts", value="antiraid"),
+    app_commands.Choice(name="AntiNuke — mass delete/ban protection", value="antinuke"),
+    app_commands.Choice(name="All Protection — AntiLink + AntiSpam + BadWords + AntiRaid + AntiNuke", value="all_protection"),
+], action=[
+    app_commands.Choice(name="Status — show current state", value="status"),
+    app_commands.Choice(name="On — turn it on (mods only)", value="on"),
+    app_commands.Choice(name="Off — turn it off (mods only)", value="off"),
+])
+async def server_settings(interaction: discord.Interaction, setting: str = "welcome", action: str = "status"):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ This only works inside a server.", ephemeral=True); return
+    if action in ("on", "off") and not _is_mod(interaction):
+        await _deny(interaction); return
+    gid=str(interaction.guild.id); cfg=_automod.setdefault(gid, {})
+    keys={"antilink": "antilink", "antispam": "antispam", "badwords": "badwords", "antiraid": "antiraid", "antinuke": "antinuke"}
+    labels={"welcome": "Welcome", "antilink": "AntiLink", "antispam": "AntiSpam", "badwords": "BadWords", "antiraid": "AntiRaid", "antinuke": "AntiNuke", "all_protection": "All Protection"}
+    def state_of(name):
+        if name == "welcome": return _welcome_enabled(interaction.guild.id)
+        if name == "all_protection": return all(bool(cfg.get(k, False)) for k in keys.values())
+        return bool(cfg.get(keys[name], False))
+    if action in ("on", "off"):
+        on=(action == "on")
+        if setting == "welcome": _set_welcome(interaction.guild.id, on)
+        elif setting == "all_protection":
+            for k in keys.values(): cfg[k]=on
+            _save_automod()
+        else:
+            cfg[keys[setting]]=on; _save_automod()
+        await interaction.response.send_message(f"✅ **{labels[setting]}** is now **{'ON' if on else 'OFF'}**.", ephemeral=True); return
+    lines=[]
+    for name in ("welcome", "antilink", "antispam", "badwords", "antiraid", "antinuke"):
+        lines.append(f"{'🟢' if state_of(name) else '🔴'} **{labels[name]}:** {'ON' if state_of(name) else 'OFF'}")
+    embed=discord.Embed(title=f"⚙️ Settings for {interaction.guild.name}", description="\n".join(lines), color=0x3498db)
+    embed.set_footer(text="Use /server settings, choose a setting, then On or Off. Mods only for changes.")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@server_group.command(name="badge", description="Show badges earned by you or another member")
+@app_commands.describe(member="Whose badges? Leave blank for yourself")
+async def server_badge(interaction: discord.Interaction, member: discord.Member = None):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ This only works inside a server.", ephemeral=True); return
+    target=member or interaction.user
+    badges=_member_badges(interaction.guild, target)
+    rec=_levels.get(str(interaction.guild.id), {}).get(str(target.id), {"xp": 0, "messages": 0})
+    level, _, _=_level_progress(int(rec.get("xp", 0)))
+    eco=_eco_rec(interaction.guild.id, target.id)
+    embed=discord.Embed(title=f"🏅 Badges of {target.display_name}", color=0xf1c40f)
+    embed.set_thumbnail(url=target.display_avatar.url)
+    embed.description="\n".join(f"• {b}" for b in badges)
+    embed.add_field(name="⭐ Level", value=str(level), inline=True)
+    embed.add_field(name="🪙 Coins", value=f"{int(eco.get('coins', 0)):,}", inline=True)
+    embed.add_field(name="💬 Messages", value=str(rec.get("messages", 0)), inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@server_group.command(name="reports", description="Moderator report inbox: list, resolve or clear member reports")
+@app_commands.describe(action="What should I do?", report_id="Report ID for Resolve")
+@app_commands.choices(action=[
+    app_commands.Choice(name="List — open reports first", value="list"),
+    app_commands.Choice(name="Resolve — mark one report resolved", value="resolve"),
+    app_commands.Choice(name="Clear Resolved — delete resolved reports", value="clear_resolved"),
+    app_commands.Choice(name="Stats — report counts", value="stats"),
+])
+async def server_reports(interaction: discord.Interaction, action: str = "list", report_id: int = 0):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ This only works inside a server.", ephemeral=True); return
+    if not _is_mod(interaction):
+        await _deny(interaction); return
+    bucket=_report_bucket(interaction.guild.id); items=bucket.setdefault("items", [])
+    if action == "resolve":
+        for r in items:
+            if int(r.get("id", 0)) == int(report_id):
+                r["resolved"]=True; _save_reports()
+                await interaction.response.send_message(f"✅ Report **#{report_id}** marked resolved.", ephemeral=True); return
+        await interaction.response.send_message(f"❌ Report **#{report_id}** was not found.", ephemeral=True); return
+    if action == "clear_resolved":
+        before=len(items); bucket["items"]=[r for r in items if not r.get("resolved")]; _save_reports()
+        await interaction.response.send_message(f"🧹 Cleared **{before-len(bucket['items'])}** resolved report(s).", ephemeral=True); return
+    if action == "stats":
+        open_n=sum(1 for r in items if not r.get("resolved")); done_n=len(items)-open_n
+        await interaction.response.send_message(f"🚨 Reports: **{len(items)} total** • **{open_n} open** • **{done_n} resolved**", ephemeral=True); return
+    if not items:
+        await interaction.response.send_message("ℹ️ No reports saved yet. Members can use `/report`.", ephemeral=True); return
+    open_items=[r for r in items if not r.get("resolved")][-10:]
+    show=open_items or items[-10:]
+    lines=[]
+    for r in show:
+        lines.append(f"**#{r.get('id')}** {'✅ resolved' if r.get('resolved') else '🟥 open'} — <@{r.get('member_id')}> reported by <@{r.get('reporter_id')}>\nReason: {str(r.get('reason',''))[:180]}")
+    embed=discord.Embed(title="🚨 Report Inbox", description="\n\n".join(lines)[:3900], color=0xe74c3c)
+    embed.set_footer(text="Resolve with /server reports → Resolve → report_id")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@server_group.command(name="permissions", description="View channel permissions for a member or the permission overwrites (mods only)")
+@app_commands.describe(channel="Which text channel? Leave blank for this channel", member="Optional: show this member's final permissions")
+async def server_permissions(interaction: discord.Interaction, channel: discord.TextChannel = None, member: discord.Member = None):
+    if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
+        await interaction.response.send_message("❌ This only works inside a server text channel.", ephemeral=True); return
+    if not _is_mod(interaction):
+        await _deny(interaction); return
+    ch=channel or interaction.channel
+    if member:
+        perms=ch.permissions_for(member)
+        yes=[name.replace("_", " ").title() for name, val in perms if val]
+        embed=discord.Embed(title=f"🔐 Permissions in #{ch.name}", description=f"**Member:** {member.mention}\n\n" + ", ".join(f"`{x}`" for x in yes[:35]), color=0x3498db)
+        await interaction.response.send_message(embed=embed, ephemeral=True); return
+    ow=ch.overwrites
+    if not ow:
+        await interaction.response.send_message(f"ℹ️ #{ch.name} has no special permission overwrites.", ephemeral=True); return
+    lines=[]
+    for target, perms in list(ow.items())[:20]:
+        allow=[n.replace("_"," ") for n,v in perms if v is True]
+        deny=[n.replace("_"," ") for n,v in perms if v is False]
+        name=getattr(target, "mention", None) or getattr(target, "name", str(target))
+        lines.append(f"{name}\n✅ {', '.join(allow[:8]) or '-'}\n❌ {', '.join(deny[:8]) or '-'}")
+    embed=discord.Embed(title=f"🔐 Permission Overwrites in #{ch.name}", description="\n\n".join(lines)[:3900], color=0x3498db)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@server_group.command(name="scrims", description="Scrims manager: create scrims, reserve slots, view slot lists and close/delete scrims")
+@app_commands.describe(action="What should I do?", name="Create: scrim name", time_text="Create: time, e.g. Today 7 PM", scrim_id="Scrim ID for reserve/slot list/close/delete", slots="Create: total slots (2-100)", slot="Reserve: slot number (0 = first free slot)")
+@app_commands.choices(action=[
+    app_commands.Choice(name="Create — make a scrim (mods only)", value="create"),
+    app_commands.Choice(name="List — show all scrims", value="list"),
+    app_commands.Choice(name="Reserve — book my slot", value="reserve"),
+    app_commands.Choice(name="Unreserve — leave my slot", value="unreserve"),
+    app_commands.Choice(name="My Slots — my booked slots", value="my_slots"),
+    app_commands.Choice(name="Slot List — show the slot list", value="slotlist"),
+    app_commands.Choice(name="Close — stop new bookings (mods only)", value="close"),
+    app_commands.Choice(name="Open — allow bookings again (mods only)", value="open"),
+    app_commands.Choice(name="Delete — remove a scrim (mods only)", value="delete"),
+])
+async def server_scrims(interaction: discord.Interaction, action: str = "list", name: str = "", time_text: str = "", scrim_id: int = 0, slots: app_commands.Range[int, 2, 100] = 25, slot: int = 0):
+    if interaction.guild is None:
+        await interaction.response.send_message("❌ Scrims work only inside a server.", ephemeral=True); return
+    bucket=_scrim_bucket(interaction.guild.id); items=bucket.setdefault("items", {})
+    if action == "create":
+        if not _is_mod(interaction):
+            await _deny(interaction); return
+        sid=int(bucket.get("next_id", 1)); bucket["next_id"]=sid+1
+        items[str(sid)]={"id": sid, "name": (name or f"Scrim #{sid}")[:80], "time": (time_text or "Time not set")[:80], "slots": int(slots), "reservations": {}, "closed": False, "created_by": interaction.user.id, "created_at": datetime.datetime.now(datetime.timezone.utc).timestamp()}
+        _save_scrims()
+        embed=discord.Embed(title="🎮 Scrim Created", color=0x2ecc71)
+        embed.add_field(name="Scrim ID", value=f"#{sid}", inline=True)
+        embed.add_field(name="Name", value=items[str(sid)]["name"], inline=True)
+        embed.add_field(name="Time", value=items[str(sid)]["time"], inline=True)
+        embed.add_field(name="Slots", value=str(slots), inline=True)
+        embed.set_footer(text=f"Book with /server scrims → Reserve → scrim_id {sid}")
+        await interaction.response.send_message(embed=embed); return
+    if action == "list":
+        if not items:
+            await interaction.response.send_message("ℹ️ No scrims yet. Mods can create one with `/server scrims`.", ephemeral=True); return
+        lines=[]
+        for it in list(items.values())[-10:]:
+            lines.append(f"**#{it['id']} {it['name']}** — {it.get('time','')}\nSlots booked: **{len(it.get('reservations', {}))}/{it.get('slots', 0)}** • {'🔴 Closed' if it.get('closed') else '🟢 Open'}")
+        embed=discord.Embed(title="🎮 Scrims", description="\n\n".join(lines)[:3900], color=0x3498db)
+        await interaction.response.send_message(embed=embed, ephemeral=True); return
+    if action in ("reserve", "unreserve", "my_slots", "slotlist", "close", "open", "delete"):
+        if action == "my_slots":
+            mine=[]
+            for it in items.values():
+                for sn, uid in it.get("reservations", {}).items():
+                    if int(uid) == interaction.user.id: mine.append(f"Scrim **#{it['id']} {it['name']}** — Slot **#{sn}** ({it.get('time','')})")
+            await interaction.response.send_message("\n".join(mine) if mine else "ℹ️ You have no scrim slots booked.", ephemeral=True); return
+        it=_find_scrim(interaction.guild.id, scrim_id)
+        if it is None:
+            await interaction.response.send_message(f"❌ Scrim **#{scrim_id}** was not found. Use List first.", ephemeral=True); return
+        if action in ("close", "open", "delete") and not _is_mod(interaction):
+            await _deny(interaction); return
+        if action == "delete":
+            items.pop(str(it["id"]), None); _save_scrims()
+            await interaction.response.send_message(f"🗑️ Scrim **#{it['id']} {it['name']}** deleted.", ephemeral=True); return
+        if action in ("close", "open"):
+            it["closed"]=(action == "close"); _save_scrims()
+            await interaction.response.send_message(f"{'🔴 Closed' if action=='close' else '🟢 Opened'} scrim **#{it['id']} {it['name']}**.", ephemeral=True); return
+        res=it.setdefault("reservations", {})
+        if action == "unreserve":
+            found=[sn for sn, uid in res.items() if int(uid) == interaction.user.id]
+            if not found:
+                await interaction.response.send_message("ℹ️ You do not have a slot in this scrim.", ephemeral=True); return
+            for sn in found: res.pop(sn, None)
+            _save_scrims()
+            await interaction.response.send_message(f"✅ Your slot in scrim **#{it['id']}** was removed.", ephemeral=True); return
+        if action == "slotlist":
+            lines=[f"🎮 **Scrim #{it['id']} — {it['name']}** ({it.get('time','')})"]
+            for n in range(1, int(it.get("slots", 0))+1):
+                uid=res.get(str(n))
+                lines.append(f"**Slot {n}:** " + (f"<@{uid}>" if uid else "— empty —"))
+            await interaction.response.send_message("\n".join(lines)[:1900]); return
+        # reserve
+        if it.get("closed"):
+            await interaction.response.send_message("🔴 This scrim is closed for new bookings.", ephemeral=True); return
+        for sn, uid in res.items():
+            if int(uid) == interaction.user.id:
+                await interaction.response.send_message(f"ℹ️ You already have **Slot #{sn}** in this scrim.", ephemeral=True); return
+        chosen=0
+        if slot and 1 <= int(slot) <= int(it.get("slots", 0)):
+            if str(int(slot)) in res:
+                await interaction.response.send_message(f"❌ Slot **#{slot}** is already booked.", ephemeral=True); return
+            chosen=int(slot)
+        else:
+            for n in range(1, int(it.get("slots", 0))+1):
+                if str(n) not in res: chosen=n; break
+        if not chosen:
+            await interaction.response.send_message("❌ All slots are full.", ephemeral=True); return
+        res[str(chosen)]=interaction.user.id; _save_scrims()
+        await interaction.response.send_message(f"✅ Slot booked! Scrim **#{it['id']} {it['name']}** — your slot is **#{chosen}**. Use Slot List to see everyone.", ephemeral=True); return
+    await interaction.response.send_message("❌ Invalid action.", ephemeral=True)
+
 # ---------- /games (11) ----------
 _game_state: dict = {}
 _TRIVIA=[
@@ -3661,7 +3970,7 @@ async def games_scramble(interaction: discord.Interaction):
     ulta=list(shabd); random.shuffle(ulta); ulta="".join(ulta)
     if ulta == shabd: ulta=shabd[::-1]
     _game_state[interaction.user.id]={"type": "scramble", "answer": shabd}
-    await interaction.response.send_message(f"🔤 **Scramble:** `{ulta}`\nCorrect word `/games scramble_guess` se batao!")
+    await interaction.response.send_message(f"🔤 **Scramble:** `{ulta}`\nUse `/games scramble_guess` to answer!")
 
 @games_group.command(name="scramble_guess", description="Tell the correct unscrambled word")
 @app_commands.describe(word="Correct word")
@@ -3714,6 +4023,22 @@ async def games_guess(interaction: discord.Interaction, number: app_commands.Ran
         await interaction.response.send_message("⬆️ It is **higher** than that! Guess again.")
     else:
         await interaction.response.send_message("⬇️ It is **lower** than that! Guess again.")
+
+@games_group.command(name="idp", description="Share a game room ID and password in a clean embed")
+@app_commands.describe(room_id="Room ID", password="Room password (optional)", game="Game name")
+@app_commands.choices(game=[
+    app_commands.Choice(name="BGMI / PUBG Mobile", value="BGMI / PUBG Mobile"),
+    app_commands.Choice(name="Free Fire", value="Free Fire"),
+    app_commands.Choice(name="Valorant", value="Valorant"),
+    app_commands.Choice(name="Custom Game", value="Custom Game"),
+])
+async def games_idp(interaction: discord.Interaction, room_id: str, password: str = "", game: str = "BGMI / PUBG Mobile"):
+    embed=discord.Embed(title=f"🎮 {game} Room Details", color=0x2ecc71)
+    embed.add_field(name="Room ID", value=f"`{str(room_id)[:80]}`", inline=True)
+    if password: embed.add_field(name="Password", value=f"||{str(password)[:80]}||", inline=True)
+    embed.add_field(name="Shared by", value=interaction.user.mention, inline=True)
+    embed.set_footer(text="Join quickly — slots fill fast. Do not share room passwords outside this server.")
+    await interaction.response.send_message(embed=embed)
 
 @games_group.command(name="slots", description="Economy coins se slot machine (triple = 5x munafa)")
 @app_commands.describe(amount="How many coins do you want to bet? (minimum 10)")
@@ -4195,13 +4520,17 @@ def _stereo_to_mono(pcm: bytes):
     mono=[]
     for i in range(0, len(vals), 2):
         mono.append((vals[i] + vals[i+1]) // 2)
-    # bohot tez awaaz (rms 5000+) ko halka Karo — phati hui awaaz STT nahi samajhta
+    # Awaaz saaf Karo: DC offset hatao, halki awaaz ko uthao aur phati hui tez awaaz ko neeche lao.
+    # Isse Google/Gemini STT ko har type ki awaaz samajhne me madad milti hai.
     try:
         if mono:
+            _mean=sum(mono)/len(mono)
+            mono=[int(v-_mean) for v in mono]
             _rms=(sum(v*v for v in mono)/len(mono)) ** 0.5
-            if _rms > 5000:
-                _f=3000.0/_rms
-                mono=[max(-32768, min(32767, int(v*_f))) for v in mono]
+            if _rms > 20:
+                _gain=max(0.45, min(3.5, 2700.0/_rms))
+                _gate=max(45, int(_rms*0.10))
+                mono=[0 if abs(v) < _gate else max(-32768, min(32767, int(v*_gain))) for v in mono]
     except Exception: pass
     return mono
 
@@ -4302,30 +4631,39 @@ async def _stt_gemini_once(wav_bytes: bytes) -> str:
     return ""
 
 async def _stt_first_try(wav_bytes: bytes, wav48_bytes: bytes = b"") -> str:
-    """Awaaz samajhne ki race: Google-free aur Gemini dono ek saath —
-    jo pehle sahi transcript de, wahi lo (tez + sahi)."""
+    """Voice ko samajhne ka sahi tareeka: Google-fast aur Gemini-accurate dono chalo,
+    lekin pehle mile hue galat transcript par rukna nahi. Gemini mile to usi ko lo,
+    warna Google wala. Gemini ko 48k saaf WAV milta hai, Google ko 16k."""
     async def _google():
         try:
             return await asyncio.get_event_loop().run_in_executor(None, lambda: _stt_google_free(wav_bytes, quick=True))
         except Exception:
             log.warning("STT google fail\n%s", traceback.format_exc())
             return ""
-    tasks={asyncio.create_task(_google()): "google-free", asyncio.create_task(_stt_gemini_once(wav_bytes)): "gemini"}
-    deadline=time.time()+20
-    pending=set(tasks)
+    gemini_audio=wav48_bytes or wav_bytes
+    tasks={asyncio.create_task(_google()): "google-free", asyncio.create_task(_stt_gemini_once(gemini_audio)): "gemini"}
+    results={}; pending=set(tasks); deadline=time.time()+14
     try:
         while pending and time.time() < deadline:
             done, pending = await asyncio.wait(pending, timeout=max(0.1, deadline-time.time()), return_when=asyncio.FIRST_COMPLETED)
             if not done: break
             for t in done:
+                label=tasks[t]
                 try: r=t.result()
                 except Exception: r=""
-                if r:
+                results[label]=r or ""
+                if label == "gemini" and r:
                     for b in pending: b.cancel()
-                    log.info("STT source: %s", tasks[t])
+                    log.info("STT source: gemini")
                     return r
+            if "gemini" in results and "google-free" in results:
+                break
     except Exception:
         log.warning("STT race fail\n%s", traceback.format_exc())
+    if results.get("gemini"): return results["gemini"]
+    if results.get("google-free"):
+        log.info("STT source: google-free")
+        return results["google-free"]
     return ""
 
 def _stt_google_free(wav_bytes: bytes, quick: bool = False) -> str:
@@ -4423,7 +4761,7 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
         if len(wav48) > 6_000_000: return
         transcript=await _stt_first_try(wav, wav48)
         if not transcript:
-            try: transcript=await _stt_gemini(wav)
+            try: transcript=await _stt_gemini(wav48)
             except Exception: transcript=""
         log.info("VC STT time %.1fs", time.time()-_t0)
         if not transcript:
@@ -4596,7 +4934,7 @@ class _WakeSink(_voice_recv.AudioSink if _voice_recv is not None else object):
                 buf=self.buffers.get(uid)
                 if not buf: continue
                 dur=len(buf) / (48000 * 2 * 2)
-                if now - last >= 0.7 and dur >= 0.5:
+                if now - last >= 1.05 and dur >= 0.65:
                     pcm=bytes(buf); self.buffers[uid]=bytearray(); self.last_seen.pop(uid, None)
                     log.info("VC boli mili user %s (%.1f sec ki awaaz)", uid, dur)
                     asyncio.create_task(_handle_voice_utterance(self.guild, uid, pcm))
