@@ -3772,6 +3772,43 @@ async def tools_video(interaction: discord.Interaction, prompt: str, seconds: ap
     except Exception:
         await interaction.followup.send(content=f"🎬 For **{interaction.user.display_name}**: {prompt}", file=discord.File(io.BytesIO(data), filename="ai-video.mp4"))
 
+@tools_group.command(name="jarvis", description="Send a command to your phone Jarvis (bot owner only)")
+@app_commands.describe(command_text="What should Jarvis do on your phone? e.g. battery batao / torch on")
+async def tools_jarvis(interaction: discord.Interaction, command_text: str):
+    owner_id=await _get_bot_owner_id()
+    if not owner_id or interaction.user.id != owner_id:
+        await interaction.response.send_message("❌ Only the bot owner can control Jarvis.", ephemeral=True); return
+    await interaction.response.defer(ephemeral=True)
+    shared=Path(__file__).resolve().parent.parent/"shared"
+    try:
+        shared.mkdir(parents=True, exist_ok=True)
+        rid=f"{interaction.id}-{int(time.time())}"
+        with (shared/"jarvis_inbox.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"id": rid, "cmd": command_text[:500], "user": interaction.user.id, "ts": time.time()}, ensure_ascii=False)+"\n")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Jarvis bridge fail: {e}", ephemeral=True); return
+    result=None
+    deadline=time.time()+30
+    outbox=shared/"jarvis_outbox.jsonl"
+    while time.time() < deadline:
+        try:
+            if outbox.exists():
+                for line in reversed(outbox.read_text(encoding="utf-8").splitlines()):
+                    try:
+                        item=json.loads(line)
+                    except Exception:
+                        continue
+                    if item.get("id") == rid:
+                        result=str(item.get("result") or "Ho gaya."); break
+        except Exception:
+            pass
+        if result is not None: break
+        await asyncio.sleep(1)
+    if result is None:
+        await interaction.followup.send("📱 Jarvis offline lag raha hai. Phone par Jarvis chalu Karo: `bash start-24x7.sh`", ephemeral=True)
+    else:
+        await interaction.followup.send(f"🤖 **Jarvis:** {result}"[:1900], ephemeral=True)
+
 @tools_group.command(name="youtube", description="YouTube in one place: Status, On, Off, Report, Videos, Comments, Upload (owner only)")
 @app_commands.describe(action="What should I do?", video="Video file for upload", title="Upload title (blank = file name)", description="Upload: description", privacy="Upload: Private/Unlisted/Public")
 @app_commands.choices(action=[

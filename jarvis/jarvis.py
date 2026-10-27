@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 
 import actions
 import brain
+import nezu_bridge
 import video_editor
 
 CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
@@ -63,7 +64,9 @@ def check_reminders():
     for r in due:
         _reminders.remove(r)
         actions.notify("⏰ Jarvis Reminder", r.get("text", "Reminder"))
-        actions.speak(f"ARISE, reminder: {r.get('text', '')}")
+        nezu_bridge.send_to_discord(f"⏰ Jarvis reminder: {r.get('text', 'Reminder')}")
+        if CONFIG.get("speak_replies"):
+            actions.speak(f"ARISE, reminder: {r.get('text', '')}")
     if due:
         save_json(REMINDERS_FILE, _reminders)
 
@@ -81,6 +84,32 @@ def execute(plan):
             return actions.battery()
         if act == "wifi":
             return actions.wifi_info()
+        if act == "wifi_on":
+            return actions.wifi_enable(True)
+        if act == "wifi_off":
+            return actions.wifi_enable(False)
+        if act == "volume":
+            return actions.volume_percent(int(args.get("level", 50)))
+        if act == "speak":
+            return actions.speak(args.get("text", ""))
+        if act == "media_play":
+            return actions.media_play(args.get("path", ""))
+        if act == "media_pause":
+            return actions.media_control("pause")
+        if act == "media_resume":
+            return actions.media_control("resume")
+        if act == "media_stop":
+            return actions.media_control("stop")
+        if act == "clipboard_set":
+            return actions.clipboard_set(args.get("text", ""))
+        if act == "clipboard_get":
+            return actions.clipboard_get()
+        if act == "download":
+            return actions.download_file(args.get("url", ""))
+        if act == "wallpaper":
+            return actions.set_wallpaper(args.get("path", ""))
+        if act == "record":
+            return actions.record_audio(int(args.get("seconds", 5)))
         if act == "location":
             return actions.location()
         if act == "vibrate":
@@ -253,7 +282,9 @@ def serve():
 
     host = CONFIG.get("server_host", "127.0.0.1")
     port = int(CONFIG.get("server_port", 8765))
+    threading.Thread(target=nezu_bridge.watch_inbox, args=(handle,), daemon=True).start()
     print(f"🤖 Jarvis server: http://{host}:{port}  (sirf isi phone se chalega)")
+    print("🔗 Nezu bridge ON — Discord /tools jarvis se command aa sakta hai.")
     log("server start")
     ThreadingHTTPServer((host, port), H).serve_forever()
 
@@ -331,6 +362,7 @@ def main():
 
     name = CONFIG.get("assistant_name", "Jarvis")
     user = CONFIG.get("user_name", "ARISE")
+    threading.Thread(target=nezu_bridge.watch_inbox, args=(handle,), daemon=True).start()
     print(f"🤖 {name} online hai, {user}. Kuch bolo (band karne ke liye: exit)")
     while True:
         try:

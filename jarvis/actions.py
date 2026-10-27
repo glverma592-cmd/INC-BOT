@@ -174,3 +174,95 @@ def device_info():
             return out[:500]
     import platform
     return f"🖥️ {platform.system()} {platform.machine()} | Python chalu hai."
+
+
+def volume_percent(pct):
+    """Volume 0-100% set Karo (music stream)."""
+    pct = max(0, min(100, int(pct)))
+    if not _has("termux-volume"):
+        return "⚠️ Volume ke liye Termux:API chahiye."
+    ok, out = _run(["termux-volume"])
+    maxv = 15
+    if ok:
+        try:
+            for s in json.loads(out):
+                if s.get("stream") == "music":
+                    maxv = int(s.get("max_volume", 15))
+        except Exception:
+            pass
+    level = round(maxv * pct / 100)
+    ok, out = _run(["termux-volume", "music", str(level)])
+    return f"🔊 Volume {pct}% kar diya." if ok else f"⚠️ Volume fail: {out}"
+
+
+def wifi_enable(on: bool):
+    if _has("termux-wifi-enable"):
+        ok, out = _run(["termux-wifi-enable", "true" if on else "false"])
+        return ("📶 WiFi ON." if on else "📶 WiFi OFF.") if ok else f"⚠️ WiFi fail: {out}"
+    return "⚠️ WiFi on/off ke liye Termux:API chahiye."
+
+
+def media_play(path):
+    if _has("termux-media-player"):
+        ok, out = _run(["termux-media-player", "play", str(path)])
+        return f"🎵 Chal raha hai: {path}" if ok else f"⚠️ Play fail: {out}"
+    return "⚠️ Media player ke liye Termux:API chahiye."
+
+
+def media_control(what):
+    if _has("termux-media-player"):
+        ok, out = _run(["termux-media-player", what])
+        return f"🎵 Media {what}." if ok else f"⚠️ {out}"
+    return "⚠️ Media player ke liye Termux:API chahiye."
+
+
+def clipboard_set(text):
+    if _has("termux-clipboard-set"):
+        ok, out = _run(["termux-clipboard-set", str(text)[:2000]])
+        return "📋 Clipboard me copy kar diya." if ok else f"⚠️ {out}"
+    return "⚠️ Clipboard ke liye Termux:API chahiye."
+
+
+def clipboard_get():
+    if _has("termux-clipboard-get"):
+        ok, out = _run(["termux-clipboard-get"])
+        return f"📋 Clipboard: {out[:500]}" if ok else "📋 Clipboard khaali hai ya permission nahi."
+    return "⚠️ Clipboard ke liye Termux:API chahiye."
+
+
+def download_file(url):
+    url = str(url).strip()
+    if not re.match(r"^https?://", url):
+        return "⚠️ Sahi link do (https:// se shuru)."
+    if _has("termux-download"):
+        ok, out = _run(["termux-download", url], timeout=120)
+        return "⬇️ Download shuru — Download folder me milega." if ok else f"⚠️ Download fail: {out}"
+    try:
+        import urllib.request
+        folder = ROOT / "downloads"
+        folder.mkdir(exist_ok=True)
+        name = re.sub(r"[^A-Za-z0-9._-]", "_", url.split("/")[-1] or "file.bin")
+        path = folder / name
+        urllib.request.urlretrieve(url, path)
+        return f"⬇️ Download ho gaya: {path}"
+    except Exception as e:
+        return f"⚠️ Download fail: {e}"
+
+
+def set_wallpaper(path):
+    if _has("termux-wallpaper"):
+        ok, out = _run(["termux-wallpaper", "-f", str(path)], timeout=60)
+        return "🖼️ Wallpaper lag gaya." if ok else f"⚠️ Wallpaper fail: {out}"
+    return "⚠️ Wallpaper ke liye Termux:API chahiye."
+
+
+def record_audio(seconds=5):
+    seconds = max(1, min(120, int(seconds)))
+    if not _has("termux-microphone-record"):
+        return "⚠️ Recording ke liye Termux:API chahiye."
+    folder = ROOT / "recordings"
+    folder.mkdir(exist_ok=True)
+    path = str(folder / f"rec-{time.strftime('%Y%m%d-%H%M%S')}.m4a")
+    ok, out = _run(["termux-microphone-record", "-f", path, "-l", str(seconds)],
+                   timeout=seconds + 30)
+    return f"🎙️ Recording save: {path}" if ok else f"⚠️ Recording fail: {out}"

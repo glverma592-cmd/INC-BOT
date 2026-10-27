@@ -2,7 +2,7 @@
   "assistant_name": "Jarvis",
   "user_name": "ARISE",
   "language": "Hinglish",
-  "speak_replies": true,
+  "speak_replies": false,
   "confirm_before": ["call", "sms", "delete", "share"],
   "server_host": "127.0.0.1",
   "server_port": 8765,

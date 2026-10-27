@@ -159,3 +159,26 @@ python jarvis.py video in.mp4 --thumb
 ```
 
 Output: `/sdcard/Movies/Jarvis/`
+
+## 🔊 Speak band + naye kaam (v3)
+
+- **Speak default band hai** (`config.json` me `speak_replies: false`).
+  Sirf tab bolega jab tum khaas bologe: `bolo namaste ARISE`
+- Permissions wala setup: `bash setup-permissions.sh`
+- Naye kaam: `volume 40 karo`, `wifi on/off`, `clipboard batao`,
+  `copy karo <text>`, `download karo <link>`, `wallpaper lagao <photo-path>`,
+  `10 second ki recording Karo`, gaana `pause/resume/roko`.
+
+## 🔗 Nezu se connection
+
+Discord me (sirf bot owner): `/tools jarvis command_text: battery batao`
+Nezu command phone ke Jarvis ko bhejegi aur jawab Discord me wapas layegi.
+Iske liye phone par Jarvis chalu hona chahiye (`bash start-24x7.sh` best).
+
+Ulta raasta — Jarvis Discord channel me khud message bheje (reminder wagera),
+uske liye Discord channel Settings → Integrations → Webhooks se ek webhook
+banao aur uska URL Nezu ki `.env` me is naam se daalo (chat/GitHub me kabhi nahi):
+
+```text
+JARVIS_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+```

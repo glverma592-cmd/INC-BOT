@@ -98,8 +98,10 @@ def qa_plan(text):
 
 ALLOWED_ACTIONS = {
     "speak", "toast", "notify", "torch_on", "torch_off", "battery",
-    "wifi", "location", "vibrate", "brightness", "open_url", "open_app",
+    "wifi", "wifi_on", "wifi_off", "location", "vibrate", "brightness", "open_url", "open_app",
     "photo", "device_info", "time", "date", "remember", "none",
+    "volume", "media_play", "media_pause", "media_resume", "media_stop",
+    "clipboard_get", "clipboard_set", "download", "wallpaper", "record",
 }
 
 APP_HINTS = {
@@ -153,6 +155,10 @@ def rule_plan(text):
         return {"action": "torch_off", "args": {}, "reply": "Torch off kar raha hu."}
     if "battery" in t:
         return {"action": "battery", "args": {}, "reply": ""}
+    if any(w in t for w in [" wifi on", " wifi chalu"]):
+        return {"action": "wifi_on", "args": {}, "reply": "WiFi on kar raha hu."}
+    if any(w in t for w in [" wifi off", " wifi band"]):
+        return {"action": "wifi_off", "args": {}, "reply": "WiFi off kar raha hu."}
     if "wifi" in t:
         return {"action": "wifi", "args": {}, "reply": ""}
     if "location" in t or " main kahan" in t or " mai kahan" in t:
@@ -171,6 +177,44 @@ def rule_plan(text):
         return {"action": "time", "args": {}, "reply": ""}
     if re.search(r"\b(date|tarikh|aaj ka din)\b", t):
         return {"action": "date", "args": {}, "reply": ""}
+
+    # --- naye permissions wale kaam ---
+    m = re.match(r"(?:bolo|bol|speak)\s*[:\-]?\s+(.+)", text.strip(), re.I | re.S)
+    if m:
+        return {"action": "speak", "args": {"text": m.group(1).strip()}, "reply": ""}
+    if any(w in t for w in [" wifi on", " wifi chalu"]):
+        return {"action": "wifi_on", "args": {}, "reply": "WiFi on kar raha hu."}
+    if any(w in t for w in [" wifi off", " wifi band"]):
+        return {"action": "wifi_off", "args": {}, "reply": "WiFi off kar raha hu."}
+    m = re.search(r"(?:volume|awaz|aawaz)\s*(?:ko\s*)?(\d+)", text, re.I)
+    if m:
+        return {"action": "volume", "args": {"level": int(m.group(1))},
+                "reply": "Volume set kar raha hu."}
+    if any(w in t for w in [" gaana roko", " music roko", " music band", " media stop"]):
+        return {"action": "media_stop", "args": {}, "reply": "Music rok raha hu."}
+    if any(w in t for w in [" gaana roko", " music roko", " pause karo", " media pause"]):
+        return {"action": "media_pause", "args": {}, "reply": "Music roka."}
+    if any(w in t for w in [" gaana chalao wapas", " resume karo", " media resume"]):
+        return {"action": "media_resume", "args": {}, "reply": "Music wapas chalu."}
+    m = re.search(r"(/[\w./\- ]+\.(?:mp3|m4a|wav|mp4))", text)
+    if m and any(w in t for w in ["chalao", " play", " bajao"]):
+        return {"action": "media_play", "args": {"path": m.group(1).strip()},
+                "reply": "Chala raha hu."}
+    m = re.search(r"(?:copy karo|clipboard me dalo|clipboard me daalo)[:\-]?\s*(.+)", text, re.I | re.S)
+    if m:
+        return {"action": "clipboard_set", "args": {"text": m.group(1).strip()}, "reply": "Copy kar raha hu."}
+    if "clipboard" in t and any(w in t for w in ["batao", "kya hai", "dikhao", "padho"]):
+        return {"action": "clipboard_get", "args": {}, "reply": ""}
+    m = re.search(r"(https?://\S+)", text)
+    if m and "download" in t:
+        return {"action": "download", "args": {"url": m.group(1)}, "reply": "Download kar raha hu."}
+    m = re.search(r"wallpaper\s*(?:lagao|set karo|badlo)?\s*[:\-]?\s*(/[\w./\- ]+\.(?:jpg|jpeg|png))", text, re.I)
+    if m:
+        return {"action": "wallpaper", "args": {"path": m.group(1).strip()}, "reply": "Wallpaper laga raha hu."}
+    m = re.search(r"(\d+)\s*(?:second|sec)\s*(?:ki\s*)?(?:recording|record)", text, re.I)
+    if m or "voice record" in t:
+        return {"action": "record", "args": {"seconds": int(m.group(1)) if m else 5},
+                "reply": "Recording shuru kar raha hu."}
 
     # app kholo — "YouTube kholo" bhi, "kholo YouTube" bhi
     if any(w in t for w in [" kholo", " open", " chalao", " start"]):
