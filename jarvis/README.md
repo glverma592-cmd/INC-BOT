@@ -122,6 +122,11 @@ Phir pucho `mera match kab hai` — bina internet wahi jawab milega.
 Mujhe (Ara ko) bologe "Jarvis ko train Karo" to mai yahi files update
 karke, test karke dunga.
 
+**Purani baatein:** har baat `chat_history.json` me save hoti hai (aakhri
+30 baat-cheet) — Jarvis band karke kholo, phir bhi purani baat yaad rahegi.
+Khud dekhne ke liye bolo `purani baat batao`, aur sab mitane ke liye
+`sab bhool jao` (ye sirf tumhare phone ki file saaf karega).
+
 ## ⚡ 24/7 mode
 
 ```bash

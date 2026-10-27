@@ -122,6 +122,12 @@ def rule_plan(text):
                 "args": {"question": m.group(1).strip(), "answer": m.group(2).strip()},
                 "reply": "Seekh liya."}
 
+    # purani baatein dekhna / sab bhoolna
+    if any(w in t for w in [" sab bhool jao", " sab kuch bhool", " memory saaf", " baatein bhool"]):
+        return {"action": "forget_all", "args": {}, "reply": "Thik hai, purani saari baatein aur yaadein saaf kar raha hu."}
+    if any(w in t for w in [" purani baat", " pehle kya kaha", " last baat", " Pichli baat"]):
+        return {"action": "history", "args": {}, "reply": ""}
+
     # yaad rakho
     m = re.search(r"yaad rakho[:\-]?\s*(.+)", text, re.I)
     if m:
@@ -191,7 +197,7 @@ def rule_plan(text):
     return None
 
 
-def gemini_plan(text, memory_facts=None):
+def gemini_plan(text, memory_facts=None, history=None):
     """Gemini se soch-wala jawab/action. Key na ho to None."""
     _load_local_env()
     key = os.environ.get("GEMINI_API_KEY", "").strip()
@@ -211,6 +217,14 @@ def gemini_plan(text, memory_facts=None):
                 examples.append(f"Q: {q} -> A: {item.get('answer', '')}")
         if examples:
             extra += "\n\nSikhe hue jawab:\n" + "\n".join(examples)
+    if history:
+        lines = []
+        for h in history[-24:]:
+            who = "ARISE" if h.get("role") == "user" else "Jarvis"
+            lines.append(f"{who}: {str(h.get('text', ''))[:300]}")
+        if lines:
+            extra += ("\n\nPichli baat-cheet (purani baatein yaad rakhna — user purani "
+                      "baat ka zikr kare to yahi use karna):\n" + "\n".join(lines))
     system = (
         persona + extra + "\n\nSaved facts: " + facts + ". "
         "Agar kaam phone action hai to SIRF in actions me se ek chuno: "
@@ -245,15 +259,15 @@ def gemini_plan(text, memory_facts=None):
         return None
 
 
-def plan(text, memory_facts=None):
-    """Pehle rule, phir Gemini, phir seedha fallback."""
+def plan(text, memory_facts=None, history=None):
+    """Pehle rule, phir apna Q&A, phir Gemini (purani baato ke saath)."""
     p = rule_plan(text)
     if p:
         return p
     q = qa_plan(text)  # apna sikha hua dimag — internet se pehle
     if q:
         return q
-    g = gemini_plan(text, memory_facts)
+    g = gemini_plan(text, memory_facts, history)
     if g:
         return g
     return {"action": "none", "args": {},

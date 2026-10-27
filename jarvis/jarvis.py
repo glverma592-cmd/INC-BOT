@@ -29,7 +29,9 @@ import video_editor
 CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 MEMORY_FILE = ROOT / "memory.json"
 REMINDERS_FILE = ROOT / "reminders.json"
+CHAT_FILE = ROOT / "chat_history.json"
 LOG_FILE = ROOT / "jarvis.log"
+MAX_HISTORY = 60  # aakhri 30 baat-cheet — isse purani khud hat jati hai (file chhoti rehti hai)
 
 
 def log(msg):
@@ -106,6 +108,19 @@ def execute(plan):
             _reminders.append({"at": time.time() + secs, "text": args.get("text", "Reminder")})
             save_json(REMINDERS_FILE, _reminders)
             return reply or f"⏰ {secs} second baad yaad dila dunga."
+        if act == "forget_all":
+            save_json(CHAT_FILE, [])
+            save_json(MEMORY_FILE, {"facts": []})
+            return "🧹 Ho gaya — purani saari baatein aur yaadein saaf kar di."
+        if act == "history":
+            hist = load_json(CHAT_FILE, [])
+            if not hist:
+                return "Abhi tak koi purani baat save nahi hai."
+            lines = ["🧠 Pichli baatein:"]
+            for h in hist[-10:]:
+                who = "🧑 ARISE" if h.get("role") == "user" else "🤖 Jarvis"
+                lines.append(f"{who}: {str(h.get('text', ''))[:120]}")
+            return "\n".join(lines)
         if act == "learn_qa":
             cfg = brain._brain_config()
             qa_path = ROOT / cfg.get("qa_file", "my_brain/qa.json")
@@ -140,8 +155,14 @@ def handle(text):
     if text.lower().startswith("video"):
         return handle_video_text(text)
     mem = load_json(MEMORY_FILE, {"facts": []})
-    plan = brain.plan(text, mem.get("facts", []))
+    hist = load_json(CHAT_FILE, [])
+    plan = brain.plan(text, mem.get("facts", []), hist)
     out = execute(plan)
+    # baat ko hamesha ke liye yaad rakho (band karke kholo, phir bhi milegi)
+    if plan.get("action") != "forget_all":
+        hist.append({"role": "user", "text": text, "ts": time.time()})
+        hist.append({"role": "model", "text": out, "ts": time.time()})
+        save_json(CHAT_FILE, hist[-MAX_HISTORY:])
     log(f"CMD: {text} -> {plan.get('action')} -> {out[:120]}")
     return out
 
@@ -186,7 +207,8 @@ def self_check():
                 "termux-notification", "termux-camera-photo"]:
         lines.append(f"📱 {cmd}: " + ("✅" if shutil.which(cmd) else "❌ (Termux:API app chahiye)"))
     lines.append("🤖 Gemini key: " + ("✅ set" if os.environ.get("GEMINI_API_KEY") else "⚠️ nahi — sirf rule commands chalenge"))
-    lines.append(f"🧠 Memory facts: {len(load_json(MEMORY_FILE, {'facts': []}).get('facts', []))}")
+    lines.append(f"🧠 Memory facts: {len(load_json(MEMORY_FILE, {'facts': []}).get('facts', []))} | "
+                 f"Purani baatein: {len(load_json(CHAT_FILE, [])) // 2} baat-cheet save")
     lines.append(f"⏰ Pending reminders: {len(_reminders)}")
     try:
         own = brain.load_own_brain()

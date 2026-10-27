@@ -3,6 +3,7 @@ __pycache__/
 jarvis.log
 self-check.txt
 memory.json
+chat_history.json
 reminders.json
 photos/
 videos/
