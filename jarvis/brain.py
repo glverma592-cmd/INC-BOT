@@ -31,7 +31,6 @@ def _load_local_env():
                     continue
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-            return
         except Exception:
             continue
 

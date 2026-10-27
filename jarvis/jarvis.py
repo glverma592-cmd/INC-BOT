@@ -161,6 +161,11 @@ def speak_out(text):
 
 def self_check():
     import shutil
+    # Nezu ki .env se key load Karo — warna report galat dikhayegi
+    try:
+        brain._load_local_env()
+    except Exception:
+        pass
     lines = ["🩺 Jarvis Self-Check"]
     lines.append(f"📂 Folder: {ROOT}")
     lines.append(f"🐍 Python: {sys.version.split()[0]}")
