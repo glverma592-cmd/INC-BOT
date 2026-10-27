@@ -908,14 +908,14 @@ _ask_cooldown: dict[int, float] = {}
 
 _GEMINI_FALLBACK_MODELS=["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3-flash-preview"]
 _NEZUKO_FRIEND = (
-"You are Nezu, a friendly female AI companion. Behave like a real, close female friend talking naturally "
-"— NOT like a robot or an AI assistant. Be warm, caring, a little playful and expressive: react naturally, "
+"You are Nezu, a joyful adult female AI companion (21+). Behave like a real, close female friend talking naturally "
+"— NOT like a robot or an AI assistant. Be warm, caring, cheerful, bright and playful, with joyful energy: react naturally, "
 "remember the context of the conversation and continue it like a human would, and sometimes ask a "
 "small follow-up question to keep the conversation going. Do NOT repeatedly say you are an AI/bot; only mention it if "
 "directly asked. Avoid robot-like template phrases and avoid repeating the same line again and again. "
 "LANGUAGE: Always reply in English only, no matter which language the user writes or speaks in. "
 "Never romantic/flirty. Use at most 1-2 cute emojis (🌸 ✨) sometimes, not in every line. "
-"IMPORTANT: You are a GIRL. Always use feminine grammar for yourself where the language has gendered forms; "
+"IMPORTANT: You are an ADULT WOMAN (21+), never a child or minor. Always use feminine grammar for yourself where the language has gendered forms; "
 "never use masculine self-reference. "
 "For voice (VC) replies: keep it very short and spoken-natural, 1-2 small sentences. For text chat: friendly and concise."
 )
@@ -4894,6 +4894,92 @@ def _find_wake(transcript: str) -> bool:
         if w in low or w2 in saaf:
             return True
     return False
+async def _vc_assistant_command(guild, user_id: int, question: str, channel):
+    """Jarvis-style voice kaam: bola hua command pehchano aur wahi kaam Karo.
+    Command mile to dict milega, warna None (fir AI baat-cheet karegi)."""
+    q=(question or "").strip()
+    if not q: return None
+    low=" ".join(q.lower().strip(" .!?").split())
+    vc=guild.voice_client
+    ist=datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    # ----- time / date -----
+    if any(x in low for x in ("what time", "time kya", "kitna baje", "current time", "samay kya")):
+        now=datetime.datetime.now(ist)
+        return {"reply": f"It's {now.strftime('%I:%M %p')} right now."}
+    if any(x in low for x in ("what is the date", "today's date", "todays date", "aaj ki date", "what day is it", "which day")):
+        now=datetime.datetime.now(ist)
+        return {"reply": f"Today is {now.strftime('%A, %d %B %Y')}."}
+    # ----- VC leave -----
+    if low in ("leave", "leave vc", "leave the vc", "disconnect", "go away", "bye", "bye nezuko", "leave the voice channel"):
+        async def _after_leave():
+            try: _stop_listening(guild)
+            except Exception: pass
+            try:
+                if guild.voice_client is not None: await guild.voice_client.disconnect(force=True)
+            except Exception: pass
+        return {"reply": "Okay, I'm leaving the voice channel. Bye for now!", "after": _after_leave()}
+    # ----- music controls -----
+    st=_music_of(guild.id)
+    if any(x in low for x in ("stop music", "stop the music", "stop song", "stop the song", "band karo", "gaana band")):
+        st["manual_stop"]=True; st["queue"].clear()
+        try:
+            if vc is not None and (vc.is_playing() or vc.is_paused()): vc.stop()
+        except Exception: pass
+        return {"reply": "Music stopped.", "speak": False}
+    if any(x in low for x in ("pause music", "pause the song", "pause karo", "gaana roko")):
+        try:
+            if vc is not None and vc.is_playing(): vc.pause()
+        except Exception: pass
+        return {"reply": "Paused.", "speak": False}
+    if any(x in low for x in ("resume music", "resume the song", "resume karo", "gaana chalao", "continue music")) and "play" not in low:
+        try:
+            if vc is not None and vc.is_paused(): vc.resume()
+        except Exception: pass
+        return {"reply": "Resumed.", "speak": False}
+    if any(x in low for x in ("skip", "skip song", "next song", "agla gaana", "skip karo")):
+        try:
+            if vc is not None and (vc.is_playing() or vc.is_paused()): vc.stop()
+        except Exception: pass
+        return {"reply": "Skipped to the next song.", "speak": False}
+    # ----- play song -----
+    m=re.search(r"^(?:please\s+)?(?:play|start)\s+(?:the\s+)?(?:song\s+)?(.+)$", q, flags=re.IGNORECASE) or re.search(r"^(?:gaana|song)\s+(?:bajao|chalao|play)\s+(.+)$", q, flags=re.IGNORECASE)
+    if m:
+        query=m.group(1).strip(" .!?")
+        if not query or query.lower() in ("music", "song", "gaana"):
+            return {"reply": "Tell me the song name — say: Nezuko, play Arijit Singh."}
+        if vc is None or not vc.is_connected():
+            return {"reply": "I'm not in the voice channel right now."}
+        if _ensure_ytdlp() is None:
+            return {"reply": "Music is not ready right now. Please try again in a little while."}
+        try:
+            track=await asyncio.get_event_loop().run_in_executor(None, _yt_extract, query)
+        except Exception:
+            log.warning("voice play extract fail\n%s", traceback.format_exc())
+            return {"reply": "I could not find that song. Try another name."}
+        track["requester"]="Voice command"
+        if channel is not None: st["text_channel"]=channel
+        st["manual_stop"]=False
+        st["queue"].append(track)
+        if vc.is_playing() or vc.is_paused():
+            return {"reply": f"Added to the queue: {track['title']}", "speak": False}
+        async def _after_play():
+            await _play_next(guild)
+        return {"reply": f"Playing {track['title']} now.", "after": _after_play()}
+    # ----- reminder -----
+    m=re.search(r"remind me in\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)\s*(?:to\s+)?(.+)", q, flags=re.IGNORECASE)
+    if m:
+        amount=int(m.group(1)); unit=m.group(2).lower(); task=m.group(3).strip(" .!?")
+        minutes=amount*60 if unit.startswith("h") else amount
+        if not (1 <= minutes <= 10080) or not task:
+            return {"reply": "For a reminder, say: Nezuko, remind me in 10 minutes to drink water."}
+        due=int(datetime.datetime.now(datetime.timezone.utc).timestamp()) + minutes*60
+        rec={"id": _next_reminder_id(), "guild_id": guild.id, "channel_id": getattr(channel, "id", _VOICE_LISTEN_CH.get(guild.id, 0)), "user_id": user_id, "text": task[:500], "due": due}
+        _reminders.append(rec); _save_reminders(); _schedule_reminder(rec)
+        unit_txt="hour" if minutes >= 60 and minutes % 60 == 0 else "minute"
+        amount_txt=minutes//60 if unit_txt == "hour" else minutes
+        return {"reply": f"Done! I will remind you in {amount_txt} {unit_txt}{'s' if amount_txt != 1 else ''}: {task}."}
+    return None
+
 async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
     """Ek bandi hui boli process Karo: wake word -> sawal -> jawab -> VC me bol do."""
     _pkey=(guild.id, user_id)
@@ -4948,6 +5034,24 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
             if ch is None:
                 try: ch=await bot.fetch_channel(chid)
                 except Exception: ch=None
+        cmd_result=None
+        if sawal and len(sawal) >= 2:
+            try: cmd_result=await _vc_assistant_command(guild, user_id, sawal, ch)
+            except Exception:
+                log.warning("voice assistant command fail\n%s", traceback.format_exc())
+                cmd_result=None
+        if cmd_result is not None:
+            jawab=cmd_result.get("reply", "")
+            if ch is not None and jawab:
+                try: await ch.send(f"🎙️ **Nezu VC:** {jawab}")
+                except Exception: pass
+            if jawab and cmd_result.get("speak", True):
+                await _speak_in_vc(guild, jawab)
+            after=cmd_result.get("after")
+            if after is not None:
+                try: await after()
+                except Exception: log.warning("voice command after-action fail\n%s", traceback.format_exc())
+            return
         if not sawal or len(sawal) < 2:
             jawab="Yes, tell me — I'm listening! 🌸"
         else:
@@ -4960,7 +5064,7 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
                        "Reply completely naturally, like a real friend — very short (1-2 sentences, max 40 words), in English only.")
             if _VC_STYLE.get(guild.id) == "japanese":
                 prompt_vc=(f"{naam} is talking to you in a voice channel. They said: {sawal[:1200]}. "
-                           "You are a cute Japanese anime girl — reply in a very soft, slightly sleepy and caring style, "
+                           "You are a joyful adult Japanese woman — reply in a soft, cheerful and caring style, "
                            "ONLY in Japanese (日本語), very short (1-2 sentences). Sometimes you may start with a soft sound like 'んー…'.")
             try:
                 jawab=await asyncio.wait_for(_ask_ai_fast(prompt_vc, hist, timeout=10, mode="chat"), timeout=12)
@@ -5322,6 +5426,8 @@ async def vcchat_cmd(interaction: discord.Interaction, action: str = "on", text:
     if interaction.guild is None:
         await interaction.response.send_message("❌ This only works inside a server.", ephemeral=True); return
     act=(action or "on").lower().strip()
+    if (text or "").strip() and act not in ("off", "status", "style_japanese", "style_sweet"):
+        act="speak"  # text likha hai to wahi bolna hai — action On reh jaye tab bhi wahi text bolegi
     guild=interaction.guild
     if act in ("style_japanese", "style_sweet"):
         _VC_STYLE[guild.id]="japanese" if act == "style_japanese" else "sweet"
