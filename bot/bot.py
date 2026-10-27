@@ -429,19 +429,19 @@ def _help_command_total() -> int:
 _HELP_CATEGORIES={
     "utility": ("⚡", "Utility", "⚡ Utility Commands",
         "`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo` `/roles` `/banner` `/channelinfo` `/emojiinfo`\n\n"
-        "**/tools**: timestamp, snowflake, uuid, random, b64encode, b64decode, sha256, binary, hex, unit, coinamount, health, ticketpanel, youtube, embed, video\n"
-        "**/text**: reverse, upper, lower, title, count, repeat, spoiler, mock, vowels, slug\n\n"
+        "**/tools** — ek hi command, pehle **action select Karo**: Timestamp, Snowflake, UUID, Random, Base64, Hash, Unit, Health, Ticket Panel, AI Video, Jarvis, YouTube, Embed\n"
+        "**/text** — ek hi command, action select Karo: Reverse, UPPERCASE, Title, Count, Repeat, Spoiler, Mock, Vowels, Slug\n\n"
         "`/calc` `/qr` `/color` `/password` `/invite` `/support`"),
     "fun": ("😄", "Fun", "😄 Fun Commands",
-        "**/actions** (with GIFs): hug, pat, slap, wave, highfive, dance, cry, laugh, angry, sleep, eat, thumbsup\n\n"
+        "**/actions** (GIF ke saath) — ek hi command, action select Karo: hug, pat, slap, wave, highfive, dance, cry, laugh, angry, sleep, eat, thumbsup\n\n"
         "**/games** — ek hi command, pehle **action select Karo**: Trivia, Riddle, Scramble, Math Quiz, Number Guess, Slots, **Battle Royale**, **Room IDP**, Coin Flip, Dice, Choose, 8-Ball, RPS (jawab ke liye wahi command dobara chalakar Answer wala action chunno)\n\n"
         "`/joke` `/fact` `/quote` `/afk` `/snipe` `/timer` — aur saare chhote games ab **/games** me (action select Karo)"),
     "mod": ("🛡️", "Mod & Protect", "🛡️ Mod & Protect Commands",
         "`/kick` `/ban` `/unban` `/timeout` `/untimeout` `/warn` `/warnings` `/clearwarn` `/clear` `/slowmode` `/lock` `/unlock`\n\n"
         "`/role_add` `/role_remove` `/nickname` `/autorole_bot_add` `/autorole_bot_remove` `/autorole_bot_status` `/setmodlog`\n\n"
-        "**Manage everything in one command:** `/server settings` — Welcome, AntiLink, AntiSpam, BadWords, AntiRaid and AntiNuke with Status / On / Off\n**Reports:** `/report` for members, `/server reports` for moderators\n**Scrims:** `/server scrims` — create scrims, reserve slots and post slot lists\n**Protection:** `/antilink` `/antispam` `/badwords` `/antiraid` `/antinuke` `/nuke` `/lockdown` `/quarantine` `/unquarantine` `/purge` `/allnuke` (owner only)"),
+        "**Manage everything in one command:** `/server` → **Settings** — Welcome, AntiLink, AntiSpam, BadWords, AntiRaid and AntiNuke with Status / On / Off\n**Reports:** `/report` for members, `/server` → **Reports** for moderators\n**Scrims:** `/server` → **Scrims** — create scrims, reserve slots and post slot lists\n**Protection:** `/antilink` `/antispam` `/badwords` `/antiraid` `/antinuke` `/nuke` `/lockdown` `/quarantine` `/unquarantine` `/purge` `/allnuke` (owner only)"),
     "economy": ("💰", "Economy", "💰 Economy Commands",
-        "`/balance` `/daily` `/pay` `/gamble` `/rank` `/leaderboard` `/server badge`\n\n"
+        "`/balance` `/daily` `/pay` `/gamble` `/rank` `/leaderboard` `/server` → **Badge**\n\n"
         "**/games → Slots** — bet Nezu Coins on the slot machine\n"
         "`/giveaway` — admin/mod giveaway\n"
         "`/remind` `/reminders` `/remind_cancel` — reminders"),
@@ -450,7 +450,7 @@ _HELP_CATEGORIES={
         "`/chatbot` — conversational chat mode (On / Off / Status); Nezu chats when tagged\n"
         "`/image` — generate an image\n"
         "`/summarize` — summarize text\n\n"
-        "**Anime actions:** `/actions hug`, `/actions pat`, `/actions dance`, `/actions wave` and more — all with GIFs\n\n"
+        "**Anime actions:** `/actions` → **Hug / Pat / Dance / Wave** and more — all with GIFs\n\n"
         "**Music & Voice:** `/play` `/p` `/join` `/skip` `/stop` `/pause` `/resume` `/queue` `/nowplaying` `/autoplay` `/vcchat`"),
     "mystic": ("🎭", "Mystic", "🎭 Mystic & Luck Commands",
         "`/games` → **8-Ball** — ask the magic 8-ball\n"
@@ -460,10 +460,10 @@ _HELP_CATEGORIES={
         "`/color` `/password` — random color and password\n"
         "**/games** — Number Guess, Math Quiz, Scramble, Trivia, **Battle Royale** — sab ek command me"),
     "welcome": ("📝", "Welcome", "📝 Welcome, Tickets & Server Commands",
-        "🌸 **Auto-Welcome is ON by default** — new members are welcomed automatically, no setup needed. Control it with `/server welcome`.\n\n"
-        "**Tickets:** `/ticket` `/close` `/tools ticketpanel` — post the HELP / BUG REPORT / IDEA panel\n\n"
+        "🌸 **Auto-Welcome is ON by default** — new members are welcomed automatically, no setup needed. Control it with `/server` → **Welcome**.\n\n"
+        "**Tickets:** `/ticket` `/close` `/tools` → **Ticket Panel** — post the HELP / BUG REPORT / IDEA panel\n\n"
         "`/say` `/announce` `/dm` `/poll` `/report` `/rules` `/suggest`\n\n"
-        "**/server**: stats, icon, serverbanner, emojis, rolescount, channels, boosts, owner, created, afk, verification, welcome, features"),
+        "**/server** — ek hi command, action select Karo: Stats, Icon, Emojis, Channels, Boosts, Owner, Welcome, Settings, Badge, Reports, Scrims and more"),
 }
 
 def _help_home_embed() -> discord.Embed:
@@ -2041,7 +2041,7 @@ async def report(interaction: discord.Interaction, member: discord.Member, reaso
         ch=interaction.guild.get_channel(int(ch_id)) if ch_id else None
         if ch is not None: await ch.send(embed=embed)
     except Exception: pass
-    await interaction.response.send_message(f"✅ Report saved. Report ID: **#{rid}** — admins can review it with `/server reports`.", ephemeral=True)
+    await interaction.response.send_message(f"✅ Report saved. Report ID: **#{rid}** — admins can review it with `/server` → **Reports**.", ephemeral=True)
 
 _summarize_cooldown: dict[int, float] = {}
 
@@ -3480,41 +3480,30 @@ server_group=app_commands.Group(name="server", description="Detailed server info
 games_group=app_commands.Group(name="games", description="Small games: trivia, riddle, scramble, math, slots and more")
 
 # ---------- /tools (11) ----------
-@tools_group.command(name="timestamp", description="Create a Discord time code for a time from now")
-@app_commands.describe(minutes="Minutes from now (negative = in the past)")
 async def tools_timestamp(interaction: discord.Interaction, minutes: app_commands.Range[int, -100000, 100000] = 0):
     ts=int(time.time()) + minutes*60
     await interaction.response.send_message(f"🕒 <t:{ts}:F>\nCode: `<t:{ts}:F>` • Relative: `<t:{ts}:R>`", ephemeral=True)
 
-@tools_group.command(name="snowflake", description="Get the creation date/time from a Discord ID")
-@app_commands.describe(user_id="Discord ID (user/channel/message)")
 async def tools_snowflake(interaction: discord.Interaction, user_id: str):
     try: dt=discord.utils.snowflake_time(int(str(user_id).strip()))
     except Exception:
         await interaction.response.send_message("❌ Give a valid numeric ID.", ephemeral=True); return
     await interaction.response.send_message(f"❄️ ID `{user_id}` was created on: **{dt.strftime('%d %b %Y, %H:%M UTC')}** (<t:{int(dt.timestamp())}:R>)", ephemeral=True)
 
-@tools_group.command(name="uuid", description="Generate a random unique ID (UUID)")
 async def tools_uuid(interaction: discord.Interaction):
     import uuid as _uuid
     await interaction.response.send_message(f"🆔 `{_uuid.uuid4()}`", ephemeral=True)
 
-@tools_group.command(name="random", description="Pick a random number between two numbers")
-@app_commands.describe(minimum="Smaller number", maximum="Larger number")
 async def tools_random(interaction: discord.Interaction, minimum: int = 1, maximum: int = 100):
     if maximum < minimum:
         await interaction.response.send_message("❌ The maximum must be greater than the minimum.", ephemeral=True); return
     await interaction.response.send_message(f"🎲 Random number ({minimum}–{maximum}): **{random.randint(minimum, maximum)}**")
 
-@tools_group.command(name="b64encode", description="Convert text to Base64")
-@app_commands.describe(text="Which text should be encoded?")
 async def tools_b64e(interaction: discord.Interaction, text: str):
     import base64 as _b64
     out=_b64.b64encode(text.encode()).decode()
     await interaction.response.send_message(f"🔐 `{out[:1800]}`", ephemeral=True)
 
-@tools_group.command(name="b64decode", description="Convert Base64 back to text")
-@app_commands.describe(text="Base64 text")
 async def tools_b64d(interaction: discord.Interaction, text: str):
     import base64 as _b64
     try: out=_b64.b64decode(text.encode()).decode("utf-8", "replace")
@@ -3522,44 +3511,24 @@ async def tools_b64d(interaction: discord.Interaction, text: str):
         await interaction.response.send_message("❌ That is not valid Base64.", ephemeral=True); return
     await interaction.response.send_message(f"🔓 `{out[:1800]}`", ephemeral=True)
 
-@tools_group.command(name="sha256", description="Create a SHA-256 hash of text")
-@app_commands.describe(text="Which text should be hashed?")
 async def tools_sha(interaction: discord.Interaction, text: str):
     import hashlib as _hl
     await interaction.response.send_message(f"#️⃣ `{_hl.sha256(text.encode()).hexdigest()}`", ephemeral=True)
 
-@tools_group.command(name="binary", description="Convert text to binary (0-1)")
-@app_commands.describe(text="Text (max 100 characters)")
 async def tools_binary(interaction: discord.Interaction, text: str):
     out=" ".join(format(ord(c), "08b") for c in text[:100])
     await interaction.response.send_message(f"💻 `{out[:1800]}`", ephemeral=True)
 
-@tools_group.command(name="hex", description="Convert text to hex code")
-@app_commands.describe(text="Text (max 200 characters)")
 async def tools_hex(interaction: discord.Interaction, text: str):
     await interaction.response.send_message(f"🔢 `{text[:200].encode().hex()[:1800]}`", ephemeral=True)
 
-@tools_group.command(name="unit", description="Convert units: km, kg, temperature and more")
-@app_commands.describe(kind="Which conversion?", value="How much?")
-@app_commands.choices(kind=[
-    app_commands.Choice(name="Kilometre → Miles", value="km_mi"),
-    app_commands.Choice(name="Miles → Kilometre", value="mi_km"),
-    app_commands.Choice(name="Kg → Pounds", value="kg_lb"),
-    app_commands.Choice(name="Pounds → Kg", value="lb_kg"),
-    app_commands.Choice(name="°C → °F", value="c_f"),
-    app_commands.Choice(name="°F → °C", value="f_c"),
-    app_commands.Choice(name="Metre → Feet", value="m_ft"),
-    app_commands.Choice(name="Feet → Metre", value="ft_m"),
-])
-async def tools_unit(interaction: discord.Interaction, kind: app_commands.Choice[str], value: float):
+async def tools_unit(interaction: discord.Interaction, kind: str, value: float):
     table={"km_mi": (value*0.621371, "miles"), "mi_km": (value*1.60934, "km"), "kg_lb": (value*2.20462, "pounds"),
            "lb_kg": (value*0.453592, "kg"), "c_f": (value*9/5+32, "°F"), "f_c": ((value-32)*5/9, "°C"),
            "m_ft": (value*3.28084, "feet"), "ft_m": (value*0.3048, "metre")}
-    result, unit=table[kind.value]
+    result, unit=table[kind]
     await interaction.response.send_message(f"📏 **{value}** → **{result:.2f} {unit}**")
 
-@tools_group.command(name="coinamount", description="Explain an amount of coins in words")
-@app_commands.describe(amount="How many coins?")
 async def tools_coinamount(interaction: discord.Interaction, amount: app_commands.Range[int, 0, 1000000000]):
     await interaction.response.send_message(f"🪙 **{amount:,}** coins" + (" — lakhpati! 🎉" if amount >= 100000 else " — badhte raho! 💪"), ephemeral=True)
 
@@ -3590,12 +3559,12 @@ def _yt_status_text():
     return ("📺 **YouTube Status**\n"
             f"🔘 Haal: **{'ON 🟢' if _YT_ENABLED else 'OFF 🔴'}**\n"
             f"🔑 Login token: **{'found ✅' if _yt_token_ready() else 'not found ❌'}**\n"
-            "For the confirmed channel report: `/tools youtube` → **Report**")
+            "For the confirmed channel report: `/tools` → **YouTube** → **Report**")
 
 def _yt_service():
     import os as _os
     if not _YT_ENABLED:
-        raise RuntimeError("YouTube is OFF. Turn it ON first: /tools youtube → On")
+        raise RuntimeError("YouTube is OFF. Turn it ON first: /tools → YouTube → On")
     token_file=_os.path.expanduser(_os.environ.get("YT_TOKEN_FILE", "~/.config/yt-agent/token.json"))
     if not _os.path.exists(token_file):
         raise RuntimeError("YouTube login not found. Connect the channel in Termux first with youtube_oauth.py.")
@@ -3689,12 +3658,10 @@ def _bot_health_text():
             f"📺 YouTube: **{'OFF 🔴' if not _YT_ENABLED else ('Connected ✅' if yt_ok else 'Not connected ❌')}**\n"
             f"💾 Hosting: Termux (phone)")
 
-@tools_group.command(name="health", description="Bot health: uptime, ping, and whether YouTube is connected (owner only)")
 async def tools_health(interaction: discord.Interaction):
     if not await _yt_owner_gate(interaction): return
     await interaction.response.send_message(_bot_health_text(), ephemeral=True)
 
-@tools_group.command(name="ticketpanel", description="Post the ticket panel (HELP / BUG REPORT / IDEA buttons) in this channel (mods only)")
 async def tools_ticketpanel(interaction: discord.Interaction):
     if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
         await interaction.response.send_message("❌ Please use this inside a server text channel.", ephemeral=True); return
@@ -3772,8 +3739,6 @@ async def _handle_yt_natural(message: discord.Message) -> bool:
 
 
 
-@tools_group.command(name="video", description="Generate a short AI video (MP4) from a text prompt")
-@app_commands.describe(prompt="Describe the video scene", seconds="Length: 3 to 8 seconds")
 async def tools_video(interaction: discord.Interaction, prompt: str, seconds: app_commands.Range[int, 3, 8] = 5):
     now=time.time()
     if now - _video_cooldown.get(interaction.user.id, 0) < 60:
@@ -3799,8 +3764,6 @@ async def tools_video(interaction: discord.Interaction, prompt: str, seconds: ap
     except Exception:
         await interaction.followup.send(content=f"🎬 For **{interaction.user.display_name}**: {prompt}", file=discord.File(io.BytesIO(data), filename="ai-video.mp4"))
 
-@tools_group.command(name="jarvis", description="Send a command to your phone Jarvis (bot owner only)")
-@app_commands.describe(command_text="What should Jarvis do on your phone? e.g. battery batao / torch on")
 async def tools_jarvis(interaction: discord.Interaction, command_text: str):
     owner_id=await _get_bot_owner_id()
     if not owner_id or interaction.user.id != owner_id:
@@ -3836,21 +3799,6 @@ async def tools_jarvis(interaction: discord.Interaction, command_text: str):
     else:
         await interaction.followup.send(f"🤖 **Jarvis:** {result}"[:1900], ephemeral=True)
 
-@tools_group.command(name="youtube", description="YouTube in one place: Status, On, Off, Report, Videos, Comments, Upload (owner only)")
-@app_commands.describe(action="What should I do?", video="Video file for upload", title="Upload title (blank = file name)", description="Upload: description", privacy="Upload: Private/Unlisted/Public")
-@app_commands.choices(action=[
-    app_commands.Choice(name="Status — On/Off and whether you are logged in", value="status"),
-    app_commands.Choice(name="On — enable YouTube", value="on"),
-    app_commands.Choice(name="Off — disable YouTube", value="off"),
-    app_commands.Choice(name="Report — channel report", value="report"),
-    app_commands.Choice(name="Videos — latest videos", value="videos"),
-    app_commands.Choice(name="Comments — latest comments", value="comments"),
-    app_commands.Choice(name="Upload — upload a video to YouTube", value="upload"),
-], privacy=[
-    app_commands.Choice(name="Private — visible only to me", value="private"),
-    app_commands.Choice(name="Unlisted — visible to anyone with the link", value="unlisted"),
-    app_commands.Choice(name="Public — visible to everyone", value="public"),
-])
 async def tools_youtube(interaction: discord.Interaction, action: str = "status", video: discord.Attachment = None, title: str = "", description: str = "", privacy: str = "private"):
     if not await _yt_owner_gate(interaction): return
     act=(action or "status").lower()
@@ -3891,13 +3839,6 @@ async def tools_youtube(interaction: discord.Interaction, action: str = "status"
     await interaction.followup.send(txt[:1900], ephemeral=True)
 
 
-@tools_group.command(name="embed", description="Create and send a clean embed message to a channel (mods only)")
-@app_commands.describe(title="Embed title", description="Embed text", channel="Channel to send it in (blank = this channel)", color="Embed color")
-@app_commands.choices(color=[
-    app_commands.Choice(name="Purple", value="purple"), app_commands.Choice(name="Blue", value="blue"),
-    app_commands.Choice(name="Green", value="green"), app_commands.Choice(name="Gold", value="gold"),
-    app_commands.Choice(name="Red", value="red"), app_commands.Choice(name="Pink", value="pink"),
-])
 async def tools_embed(interaction: discord.Interaction, title: str, description: str, channel: discord.TextChannel = None, color: str = "purple"):
     if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
         await interaction.response.send_message("❌ This only works inside a server text channel.", ephemeral=True); return
@@ -3913,61 +3854,166 @@ async def tools_embed(interaction: discord.Interaction, title: str, description:
         await interaction.response.send_message(f"❌ I cannot send messages in {ch.mention}.", ephemeral=True); return
     await interaction.response.send_message(f"✅ Embed sent to {ch.mention}.", ephemeral=True)
 
-# ---------- /text (10) ----------
-@text_group.command(name="reverse", description="Reverse text")
-@app_commands.describe(text="Which text?")
+@bot.tree.command(name="tools", description="Utility tools in one place — first choose an action")
+@app_commands.describe(action="Which tool?", text="Text / ID / prompt / Jarvis command (as needed)", title="YouTube upload title or Embed title", description="YouTube upload description or Embed text", number="Minutes / minimum / coins / video seconds (as needed)", number2="Random: larger number", value="Unit: how much?", channel="Embed: channel (blank = this channel)", video="YouTube Upload: attach the video file")
+@app_commands.choices(action=[
+    app_commands.Choice(name="🕒 Timestamp — Discord time code", value="timestamp"),
+    app_commands.Choice(name="❄️ Snowflake — date from a Discord ID (text)", value="snowflake"),
+    app_commands.Choice(name="🆔 UUID — random unique ID", value="uuid"),
+    app_commands.Choice(name="🎲 Random — number between two numbers", value="random"),
+    app_commands.Choice(name="🔐 Base64 Encode (text)", value="b64encode"),
+    app_commands.Choice(name="🔓 Base64 Decode (text)", value="b64decode"),
+    app_commands.Choice(name="✳️ SHA-256 Hash (text)", value="sha256"),
+    app_commands.Choice(name="💻 Binary — text to 0-1 (text)", value="binary"),
+    app_commands.Choice(name="🔢 Hex — text to hex (text)", value="hex"),
+    app_commands.Choice(name="📏 Unit Convert", value="unit"),
+    app_commands.Choice(name="🪙 Coin Amount — coins in words (number)", value="coinamount"),
+    app_commands.Choice(name="🟢 Health — bot health (owner)", value="health"),
+    app_commands.Choice(name="🎟️ Ticket Panel — post ticket buttons (mods)", value="ticketpanel"),
+    app_commands.Choice(name="🎬 AI Video — make a video (text = prompt)", value="video"),
+    app_commands.Choice(name="🤖 Jarvis — command your phone (owner, text)", value="jarvis"),
+    app_commands.Choice(name="📺 YouTube — channel tools (owner)", value="youtube"),
+    app_commands.Choice(name="🧾 Embed — send a clean embed (mods)", value="embed"),
+], unit_kind=[
+    app_commands.Choice(name="Kilometre → Miles", value="km_mi"),
+    app_commands.Choice(name="Miles → Kilometre", value="mi_km"),
+    app_commands.Choice(name="Kg → Pounds", value="kg_lb"),
+    app_commands.Choice(name="Pounds → Kg", value="lb_kg"),
+    app_commands.Choice(name="°C → °F", value="c_f"),
+    app_commands.Choice(name="°F → °C", value="f_c"),
+    app_commands.Choice(name="Metre → Feet", value="m_ft"),
+    app_commands.Choice(name="Feet → Metre", value="ft_m"),
+], youtube_action=[
+    app_commands.Choice(name="Status", value="status"),
+    app_commands.Choice(name="On", value="on"),
+    app_commands.Choice(name="Off", value="off"),
+    app_commands.Choice(name="Report", value="report"),
+    app_commands.Choice(name="Videos", value="videos"),
+    app_commands.Choice(name="Comments", value="comments"),
+    app_commands.Choice(name="Upload (attach video)", value="upload"),
+], privacy=[
+    app_commands.Choice(name="Private — only me", value="private"),
+    app_commands.Choice(name="Unlisted — anyone with link", value="unlisted"),
+    app_commands.Choice(name="Public — everyone", value="public"),
+], color=[
+    app_commands.Choice(name="Purple", value="purple"), app_commands.Choice(name="Blue", value="blue"),
+    app_commands.Choice(name="Green", value="green"), app_commands.Choice(name="Gold", value="gold"),
+    app_commands.Choice(name="Red", value="red"), app_commands.Choice(name="Pink", value="pink"),
+])
+async def tools_cmd(interaction: discord.Interaction, action: app_commands.Choice[str], text: str = "", title: str = "", description: str = "", number: int = 0, number2: int = 100, value: float = 0.0, unit_kind: str = "km_mi", youtube_action: str = "status", privacy: str = "private", color: str = "purple", video: discord.Attachment = None, channel: discord.TextChannel = None):
+    act=action.value; txt=(text or "").strip()
+    try:
+        if act == "timestamp": await tools_timestamp(interaction, int(number))
+        elif act == "snowflake":
+            if not txt: await interaction.response.send_message("❌ Give the Discord ID in **text**.", ephemeral=True); return
+            await tools_snowflake(interaction, txt)
+        elif act == "uuid": await tools_uuid(interaction)
+        elif act == "random": await tools_random(interaction, int(number) if number else 1, int(number2))
+        elif act in ("b64encode", "b64decode", "sha256", "binary", "hex"):
+            if not txt: await interaction.response.send_message("❌ Write something in **text** first.", ephemeral=True); return
+            fn={"b64encode": tools_b64e, "b64decode": tools_b64d, "sha256": tools_sha, "binary": tools_binary, "hex": tools_hex}[act]
+            await fn(interaction, txt)
+        elif act == "unit": await tools_unit(interaction, unit_kind, float(value))
+        elif act == "coinamount": await tools_coinamount(interaction, int(number))
+        elif act == "health": await tools_health(interaction)
+        elif act == "ticketpanel": await tools_ticketpanel(interaction)
+        elif act == "video":
+            if not txt: await interaction.response.send_message("❌ Describe the video in **text**.", ephemeral=True); return
+            secs=int(number) if number else 5
+            if not (3 <= secs <= 8):
+                await interaction.response.send_message("❌ Video length must be 3-8 seconds (give it in **number**).", ephemeral=True); return
+            await tools_video(interaction, txt, secs)
+        elif act == "jarvis":
+            if not txt: await interaction.response.send_message("❌ Write the Jarvis command in **text** — e.g. battery batao.", ephemeral=True); return
+            await tools_jarvis(interaction, txt)
+        elif act == "youtube": await tools_youtube(interaction, youtube_action, video, title, description, privacy)
+        elif act == "embed":
+            if not title or not description:
+                await interaction.response.send_message("❌ Give the embed **title** and **description**.", ephemeral=True); return
+            await tools_embed(interaction, title, description, channel, color)
+        else: await interaction.response.send_message("❌ Unknown tool action.", ephemeral=True)
+    except Exception:
+        log.warning("tools merged command fail\n%s", traceback.format_exc())
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ That tool could not run. Please try again.", ephemeral=True)
+        except Exception: pass
+
+
+# ---------- /text (helpers) ----------
 async def text_reverse(interaction: discord.Interaction, text: str):
     await interaction.response.send_message(text[:500][::-1])
 
-@text_group.command(name="upper", description="Convert text to UPPERCASE letters")
-@app_commands.describe(text="Which text?")
 async def text_upper(interaction: discord.Interaction, text: str):
     await interaction.response.send_message(text[:1000].upper())
 
-@text_group.command(name="lower", description="Convert text to lowercase letters")
-@app_commands.describe(text="Which text?")
 async def text_lower(interaction: discord.Interaction, text: str):
     await interaction.response.send_message(text[:1000].lower())
 
-@text_group.command(name="title", description="Capitalize the first letter of every word")
-@app_commands.describe(text="Which text?")
 async def text_title(interaction: discord.Interaction, text: str):
     await interaction.response.send_message(text[:1000].title())
 
-@text_group.command(name="count", description="Count letters, words and lines in text")
-@app_commands.describe(text="Which text should be counted?")
 async def text_count(interaction: discord.Interaction, text: str):
     await interaction.response.send_message(f"🔢 Letters: **{len(text)}** • Words: **{len(text.split())}** • Lines: **{len(text.splitlines()) or 1}**", ephemeral=True)
 
-@text_group.command(name="repeat", description="Repeat text multiple times")
-@app_commands.describe(text="Which text?", times="How many times? (1-10)")
 async def text_repeat(interaction: discord.Interaction, text: str, times: app_commands.Range[int, 1, 10] = 3):
     await interaction.response.send_message((text[:200] + "\n") * times)
 
-@text_group.command(name="spoiler", description="Send text as a hidden spoiler")
-@app_commands.describe(text="Which text should be hidden?")
 async def text_spoiler(interaction: discord.Interaction, text: str):
     await interaction.response.send_message(f"||{text[:500]}||")
 
-@text_group.command(name="mock", description="Convert text to aLtErNaTiNg case (fun)")
-@app_commands.describe(text="Which text?")
 async def text_mock(interaction: discord.Interaction, text: str):
     out="".join(c.upper() if i % 2 == 0 else c.lower() for i, c in enumerate(text[:500]))
     await interaction.response.send_message(out)
 
-@text_group.command(name="vowels", description="Count vowels (a,e,i,o,u) in text")
-@app_commands.describe(text="Which text?")
 async def text_vowels(interaction: discord.Interaction, text: str):
     low=text.lower(); ginti={v: low.count(v) for v in "aeiou"}
     await interaction.response.send_message("🔤 " + " • ".join(f"**{v}**: {n}" for v, n in ginti.items()) + f"\nTotal vowels: **{sum(ginti.values())}**", ephemeral=True)
 
-@text_group.command(name="slug", description="Convert text into a link-style slug (hello-world type)")
-@app_commands.describe(text="Which text?")
 async def text_slug(interaction: discord.Interaction, text: str):
     slug=re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:200]
     await interaction.response.send_message(f"🔗 `{slug or 'empty'}`", ephemeral=True)
 
-# ---------- /actions (12, factory-made, with GIFs) ----------
+@bot.tree.command(name="text", description="Text tools in one place — first choose an action")
+@app_commands.describe(action="Which text action?", text="Your text", number="Repeat: how many times (1-10)")
+@app_commands.choices(action=[
+    app_commands.Choice(name="🔁 Reverse", value="reverse"),
+    app_commands.Choice(name="🔠 UPPERCASE", value="upper"),
+    app_commands.Choice(name="🔡 lowercase", value="lower"),
+    app_commands.Choice(name="✨ Title Case", value="title"),
+    app_commands.Choice(name="🔢 Count — letters/words/lines", value="count"),
+    app_commands.Choice(name="🔂 Repeat (number = times)", value="repeat"),
+    app_commands.Choice(name="🙈 Spoiler — hidden text", value="spoiler"),
+    app_commands.Choice(name="🤪 Mock — aLtErNaTiNg case", value="mock"),
+    app_commands.Choice(name="🗣️ Vowels — count a,e,i,o,u", value="vowels"),
+    app_commands.Choice(name="🔗 Slug — link-style text", value="slug"),
+])
+async def text_cmd(interaction: discord.Interaction, action: app_commands.Choice[str], text: str, number: int = 3):
+    act=action.value
+    try:
+        if act == "reverse": await text_reverse(interaction, text)
+        elif act == "upper": await text_upper(interaction, text)
+        elif act == "lower": await text_lower(interaction, text)
+        elif act == "title": await text_title(interaction, text)
+        elif act == "count": await text_count(interaction, text)
+        elif act == "repeat":
+            if not (1 <= int(number) <= 10):
+                await interaction.response.send_message("❌ Repeat count must be 1-10 (give it in **number**).", ephemeral=True); return
+            await text_repeat(interaction, text, int(number))
+        elif act == "spoiler": await text_spoiler(interaction, text)
+        elif act == "mock": await text_mock(interaction, text)
+        elif act == "vowels": await text_vowels(interaction, text)
+        elif act == "slug": await text_slug(interaction, text)
+        else: await interaction.response.send_message("❌ Unknown text action.", ephemeral=True)
+    except Exception:
+        log.warning("text merged command fail\n%s", traceback.format_exc())
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ That text action could not run.", ephemeral=True)
+        except Exception: pass
+
+
+# ---------- /actions (helpers, with GIFs) ----------
 _ACTION_GIF_ENDPOINTS={
     "hug": "hug", "pat": "pat", "slap": "slap", "wave": "wave",
     "highfive": "highfive", "dance": "dance", "cry": "cry", "laugh": "laugh",
@@ -3986,24 +4032,25 @@ async def _action_gif_url(action_name: str):
     except Exception:
         return None
 
-def _reg_action(action_name, line):
-    @actions_group.command(name=action_name, description=f"Send a GIF for the {action_name} action to a member")
-    @app_commands.describe(member="Which member? (blank = yourself)")
-    async def _act(interaction: discord.Interaction, member: discord.Member = None):
-        target=member or interaction.user
-        await interaction.response.defer()
-        gif_url=await _action_gif_url(action_name)
-        embed=discord.Embed(description=f"{interaction.user.mention} → {target.mention}: **{line}**", color=0x9b59b6)
-        if gif_url: embed.set_image(url=gif_url)
-        await interaction.followup.send(embed=embed)
-    return _act
-for _action_name, _action_line in [
-    ("hug", "gave a warm hug!"), ("pat", "gently patted their head!"), ("slap", "gave a playful slap! (just for fun)"),
-    ("wave", "waved — hello!"), ("highfive", "gave a big high-five!"), ("dance", "started dancing together!"),
-    ("cry", "pretended to cry!"), ("laugh", "burst out laughing!"), ("angry", "pretended to be angry!"),
-    ("sleep", "went off to sleep — good night!"), ("eat", "sat down to eat together!"), ("thumbsup", "gave a thumbs up — great job!"),
-]:
-    _reg_action(_action_name, _action_line)
+_ACTION_LINES={
+    "hug": "gave a warm hug!", "pat": "gently patted their head!", "slap": "gave a playful slap! (just for fun)",
+    "wave": "waved — hello!", "highfive": "gave a big high-five!", "dance": "started dancing together!",
+    "cry": "pretended to cry!", "laugh": "burst out laughing!", "angry": "pretended to be angry!",
+    "sleep": "went off to sleep — good night!", "eat": "sat down to eat together!", "thumbsup": "gave a thumbs up — great job!",
+}
+async def _do_action(interaction: discord.Interaction, action_name: str, member=None):
+    target=member or interaction.user
+    await interaction.response.defer()
+    gif_url=await _action_gif_url(action_name)
+    embed=discord.Embed(description=f"{interaction.user.mention} → {target.mention}: **{_ACTION_LINES[action_name]}**", color=0x9b59b6)
+    if gif_url: embed.set_image(url=gif_url)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="actions", description="Fun actions with GIFs — first choose an action")
+@app_commands.describe(action="Which action?", member="Which member? (blank = yourself)")
+@app_commands.choices(action=[app_commands.Choice(name=n, value=n) for n in ["hug", "pat", "slap", "wave", "highfive", "dance", "cry", "laugh", "angry", "sleep", "eat", "thumbsup"]])
+async def actions_cmd(interaction: discord.Interaction, action: app_commands.Choice[str], member: discord.Member = None):
+    await _do_action(interaction, action.value, member)
 
 # ---------- Scrims + Reports storage (Quo-style useful tools) ----------
 _SCRIMS_FILE = Path(__file__).resolve().parent / "scrims.json"
@@ -4065,7 +4112,6 @@ def _member_badges(guild, member) -> list:
 def _server_lazmi(interaction):
     return interaction.guild is not None
 
-@server_group.command(name="stats", description="Total server numbers: members, bots, channels")
 async def server_stats(interaction: discord.Interaction):
     if not _server_lazmi(interaction):
         await interaction.response.send_message("❌ This only works inside a server.", ephemeral=True); return
@@ -4080,7 +4126,6 @@ async def server_stats(interaction: discord.Interaction):
     embed.add_field(name="🎭 Roles", value=f"{len(g.roles)}", inline=True)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@server_group.command(name="icon", description="View the server icon/photo in large size")
 async def server_icon(interaction: discord.Interaction):
     if not _server_lazmi(interaction):
         await interaction.response.send_message("❌ Only inside a server.", ephemeral=True); return
@@ -4091,7 +4136,6 @@ async def server_icon(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("ℹ️ This server has no icon.", ephemeral=True)
 
-@server_group.command(name="serverbanner", description="View the server banner (if it has one)")
 async def server_banner(interaction: discord.Interaction):
     if not _server_lazmi(interaction):
         await interaction.response.send_message("❌ Only inside a server.", ephemeral=True); return
@@ -4103,7 +4147,6 @@ async def server_banner(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("ℹ️ This server has no banner (a boost level is required).", ephemeral=True)
 
-@server_group.command(name="emojis", description="List of custom emojis in this server")
 async def server_emojis(interaction: discord.Interaction):
     if not _server_lazmi(interaction):
         await interaction.response.send_message("❌ Only inside a server.", ephemeral=True); return
@@ -4113,7 +4156,6 @@ async def server_emojis(interaction: discord.Interaction):
     txt=" ".join(str(e) for e in emojis[:40])
     await interaction.response.send_message(f"😀 **{len(emojis)} custom emojis:**\n{txt}"[:1900], ephemeral=True)
 
-@server_group.command(name="rolescount", description="See how many roles the server has and which is highest")
 async def server_rolescount(interaction: discord.Interaction):
     if not _server_lazmi(interaction):
         await interaction.response.send_message("❌ Only inside a server.", ephemeral=True); return
@@ -4121,7 +4163,6 @@ async def server_rolescount(interaction: discord.Interaction):
     top=max(g.roles, key=lambda r: r.position)
     await interaction.response.send_message(f"🎭 **{g.name}** has **{len(g.roles)} roles** in total.\nHighest role: {top.mention}", ephemeral=True)
 
-@server_group.command(name="channels", description="Count and list all server channels (first 30)")
 async def server_channels(interaction: discord.Interaction):
     if not _server_lazmi(interaction):
         await interaction.response.send_message("❌ Only inside a server.", ephemeral=True); return
@@ -4129,27 +4170,23 @@ async def server_channels(interaction: discord.Interaction):
     names=[f"#{c.name}" for c in g.text_channels[:30]]
     await interaction.response.send_message(f"📺 Total channels: **{len(g.channels)}** (text {len(g.text_channels)}, voice {len(g.voice_channels)}, categories {len(g.categories)})\n" + ", ".join(names), ephemeral=True)
 
-@server_group.command(name="boosts", description="Server boosts and boost level")
 async def server_boosts(interaction: discord.Interaction):
     if not _server_lazmi(interaction):
         await interaction.response.send_message("❌ Only inside a server.", ephemeral=True); return
     g=interaction.guild
     await interaction.response.send_message(f"🚀 **{g.name}** — Boost Level: **{g.premium_tier}** • Total boosts: **{g.premium_subscription_count or 0}**", ephemeral=True)
 
-@server_group.command(name="owner", description="See who owns the server")
 async def server_owner(interaction: discord.Interaction):
     if not _server_lazmi(interaction):
         await interaction.response.send_message("❌ Only inside a server.", ephemeral=True); return
     await interaction.response.send_message(f"👑 Owner of **{interaction.guild.name}**: <@{interaction.guild.owner_id}> (`{interaction.guild.owner_id}`)", ephemeral=True)
 
-@server_group.command(name="created", description="See when the server was created")
 async def server_created(interaction: discord.Interaction):
     if not _server_lazmi(interaction):
         await interaction.response.send_message("❌ Only inside a server.", ephemeral=True); return
     dt=interaction.guild.created_at
     await interaction.response.send_message(f"🎂 **{interaction.guild.name}** was created on: **{dt.strftime('%d %b %Y')}** (<t:{int(dt.timestamp())}:R>)", ephemeral=True)
 
-@server_group.command(name="afk", description="Server AFK channel and timeout")
 async def server_afk(interaction: discord.Interaction):
     if not _server_lazmi(interaction):
         await interaction.response.send_message("❌ Only inside a server.", ephemeral=True); return
@@ -4157,20 +4194,12 @@ async def server_afk(interaction: discord.Interaction):
     ch=g.afk_channel.mention if g.afk_channel else "not set"
     await interaction.response.send_message(f"💤 AFK channel: **{ch}** • AFK timeout: **{g.afk_timeout} second**", ephemeral=True)
 
-@server_group.command(name="verification", description="Server verification level and content filter")
 async def server_verification(interaction: discord.Interaction):
     if not _server_lazmi(interaction):
         await interaction.response.send_message("❌ Only inside a server.", ephemeral=True); return
     g=interaction.guild
     await interaction.response.send_message(f"🛡️ Verification level: **{str(g.verification_level).title()}** • Content filter: **{str(g.explicit_content_filter).title()}**", ephemeral=True)
 
-@server_group.command(name="welcome", description="Auto-welcome On/Off/Status (default: ON, no setup needed)")
-@app_commands.describe(action="On, Off or Status")
-@app_commands.choices(action=[
-    app_commands.Choice(name="On — turn auto-welcome on", value="on"),
-    app_commands.Choice(name="Off — turn auto-welcome off", value="off"),
-    app_commands.Choice(name="Status — check status", value="status"),
-])
 async def server_welcome(interaction: discord.Interaction, action: str = "status"):
     if interaction.guild is None:
         await interaction.response.send_message("❌ This only works inside a server.", ephemeral=True); return
@@ -4186,7 +4215,6 @@ async def server_welcome(interaction: discord.Interaction, action: str = "status
         state="ON ✅ (default — runs automatically, no setup needed)" if _welcome_enabled(interaction.guild.id) else "OFF"
         await interaction.response.send_message(f"🌸 Auto-Welcome in this server: **{state}**", ephemeral=True)
 
-@server_group.command(name="features", description="See special server features (community, partner, etc.)")
 async def server_features(interaction: discord.Interaction):
     if not _server_lazmi(interaction):
         await interaction.response.send_message("❌ Only inside a server.", ephemeral=True); return
@@ -4195,21 +4223,6 @@ async def server_features(interaction: discord.Interaction):
     await interaction.response.send_message(f"✨ **Features:** {txt}"[:1900], ephemeral=True)
 
 
-@server_group.command(name="settings", description="Server settings in one place: Status, On or Off for protection and welcome features")
-@app_commands.describe(setting="Which setting?", action="Status, On or Off")
-@app_commands.choices(setting=[
-    app_commands.Choice(name="Welcome — automatic member welcome", value="welcome"),
-    app_commands.Choice(name="AntiLink — delete links", value="antilink"),
-    app_commands.Choice(name="AntiSpam — delete flood/spam", value="antispam"),
-    app_commands.Choice(name="BadWords — abusive-word filter", value="badwords"),
-    app_commands.Choice(name="AntiRaid — mass-join alerts", value="antiraid"),
-    app_commands.Choice(name="AntiNuke — mass delete/ban protection", value="antinuke"),
-    app_commands.Choice(name="All Protection — AntiLink + AntiSpam + BadWords + AntiRaid + AntiNuke", value="all_protection"),
-], action=[
-    app_commands.Choice(name="Status — show current state", value="status"),
-    app_commands.Choice(name="On — turn it on (mods only)", value="on"),
-    app_commands.Choice(name="Off — turn it off (mods only)", value="off"),
-])
 async def server_settings(interaction: discord.Interaction, setting: str = "welcome", action: str = "status"):
     if interaction.guild is None:
         await interaction.response.send_message("❌ This only works inside a server.", ephemeral=True); return
@@ -4235,11 +4248,9 @@ async def server_settings(interaction: discord.Interaction, setting: str = "welc
     for name in ("welcome", "antilink", "antispam", "badwords", "antiraid", "antinuke"):
         lines.append(f"{'🟢' if state_of(name) else '🔴'} **{labels[name]}:** {'ON' if state_of(name) else 'OFF'}")
     embed=discord.Embed(title=f"⚙️ Settings for {interaction.guild.name}", description="\n".join(lines), color=0x3498db)
-    embed.set_footer(text="Use /server settings, choose a setting, then On or Off. Mods only for changes.")
+    embed.set_footer(text="Use /server → Settings, choose a setting, then On or Off. Mods only for changes.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@server_group.command(name="badge", description="Show badges earned by you or another member")
-@app_commands.describe(member="Whose badges? Leave blank for yourself")
 async def server_badge(interaction: discord.Interaction, member: discord.Member = None):
     if interaction.guild is None:
         await interaction.response.send_message("❌ This only works inside a server.", ephemeral=True); return
@@ -4256,14 +4267,6 @@ async def server_badge(interaction: discord.Interaction, member: discord.Member 
     embed.add_field(name="💬 Messages", value=str(rec.get("messages", 0)), inline=True)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@server_group.command(name="reports", description="Moderator report inbox: list, resolve or clear member reports")
-@app_commands.describe(action="What should I do?", report_id="Report ID for Resolve")
-@app_commands.choices(action=[
-    app_commands.Choice(name="List — open reports first", value="list"),
-    app_commands.Choice(name="Resolve — mark one report resolved", value="resolve"),
-    app_commands.Choice(name="Clear Resolved — delete resolved reports", value="clear_resolved"),
-    app_commands.Choice(name="Stats — report counts", value="stats"),
-])
 async def server_reports(interaction: discord.Interaction, action: str = "list", report_id: int = 0):
     if interaction.guild is None:
         await interaction.response.send_message("❌ This only works inside a server.", ephemeral=True); return
@@ -4290,11 +4293,9 @@ async def server_reports(interaction: discord.Interaction, action: str = "list",
     for r in show:
         lines.append(f"**#{r.get('id')}** {'✅ resolved' if r.get('resolved') else '🟥 open'} — <@{r.get('member_id')}> reported by <@{r.get('reporter_id')}>\nReason: {str(r.get('reason',''))[:180]}")
     embed=discord.Embed(title="🚨 Report Inbox", description="\n\n".join(lines)[:3900], color=0xe74c3c)
-    embed.set_footer(text="Resolve with /server reports → Resolve → report_id")
+    embed.set_footer(text="Resolve with /server → Reports → Resolve → report_id")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@server_group.command(name="permissions", description="View channel permissions for a member or the permission overwrites (mods only)")
-@app_commands.describe(channel="Which text channel? Leave blank for this channel", member="Optional: show this member's final permissions")
 async def server_permissions(interaction: discord.Interaction, channel: discord.TextChannel = None, member: discord.Member = None):
     if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
         await interaction.response.send_message("❌ This only works inside a server text channel.", ephemeral=True); return
@@ -4318,19 +4319,6 @@ async def server_permissions(interaction: discord.Interaction, channel: discord.
     embed=discord.Embed(title=f"🔐 Permission Overwrites in #{ch.name}", description="\n\n".join(lines)[:3900], color=0x3498db)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@server_group.command(name="scrims", description="Scrims manager: create scrims, reserve slots, view slot lists and close/delete scrims")
-@app_commands.describe(action="What should I do?", name="Create: scrim name", time_text="Create: time, e.g. Today 7 PM", scrim_id="Scrim ID for reserve/slot list/close/delete", slots="Create: total slots (2-100)", slot="Reserve: slot number (0 = first free slot)")
-@app_commands.choices(action=[
-    app_commands.Choice(name="Create — make a scrim (mods only)", value="create"),
-    app_commands.Choice(name="List — show all scrims", value="list"),
-    app_commands.Choice(name="Reserve — book my slot", value="reserve"),
-    app_commands.Choice(name="Unreserve — leave my slot", value="unreserve"),
-    app_commands.Choice(name="My Slots — my booked slots", value="my_slots"),
-    app_commands.Choice(name="Slot List — show the slot list", value="slotlist"),
-    app_commands.Choice(name="Close — stop new bookings (mods only)", value="close"),
-    app_commands.Choice(name="Open — allow bookings again (mods only)", value="open"),
-    app_commands.Choice(name="Delete — remove a scrim (mods only)", value="delete"),
-])
 async def server_scrims(interaction: discord.Interaction, action: str = "list", name: str = "", time_text: str = "", scrim_id: int = 0, slots: app_commands.Range[int, 2, 100] = 25, slot: int = 0):
     if interaction.guild is None:
         await interaction.response.send_message("❌ Scrims work only inside a server.", ephemeral=True); return
@@ -4346,11 +4334,11 @@ async def server_scrims(interaction: discord.Interaction, action: str = "list", 
         embed.add_field(name="Name", value=items[str(sid)]["name"], inline=True)
         embed.add_field(name="Time", value=items[str(sid)]["time"], inline=True)
         embed.add_field(name="Slots", value=str(slots), inline=True)
-        embed.set_footer(text=f"Book with /server scrims → Reserve → scrim_id {sid}")
+        embed.set_footer(text=f"Book with /server → Scrims → Reserve → scrim_id {sid}")
         await interaction.response.send_message(embed=embed); return
     if action == "list":
         if not items:
-            await interaction.response.send_message("ℹ️ No scrims yet. Mods can create one with `/server scrims`.", ephemeral=True); return
+            await interaction.response.send_message("ℹ️ No scrims yet. Mods can create one with `/server` → **Scrims**.", ephemeral=True); return
         lines=[]
         for it in list(items.values())[-10:]:
             lines.append(f"**#{it['id']} {it['name']}** — {it.get('time','')}\nSlots booked: **{len(it.get('reservations', {}))}/{it.get('slots', 0)}** • {'🔴 Closed' if it.get('closed') else '🟢 Open'}")
@@ -4408,7 +4396,86 @@ async def server_scrims(interaction: discord.Interaction, action: str = "list", 
         await interaction.response.send_message(f"✅ Slot booked! Scrim **#{it['id']} {it['name']}** — your slot is **#{chosen}**. Use Slot List to see everyone.", ephemeral=True); return
     await interaction.response.send_message("❌ Invalid action.", ephemeral=True)
 
-# ---------- /games (11) ----------
+@bot.tree.command(name="server", description="Server info and manager in one place — first choose an action")
+@app_commands.describe(action="Which server action?", member="Badge/Permissions: which member?", channel="Permissions: which channel? (blank = this one)", name="Scrims Create: scrim name", time_text="Scrims Create: time, e.g. Today 7 PM", scrim_id="Scrims: scrim ID", report_id="Reports Resolve: report ID", slots="Scrims Create: total slots (2-100)", slot="Scrims Reserve: slot number (0 = first free)")
+@app_commands.choices(action=[
+    app_commands.Choice(name="📊 Stats — server numbers", value="stats"),
+    app_commands.Choice(name="🖼️ Icon — server photo", value="icon"),
+    app_commands.Choice(name="🖼️ Server Banner", value="serverbanner"),
+    app_commands.Choice(name="😀 Emojis — custom emoji list", value="emojis"),
+    app_commands.Choice(name="🎭 Roles Count", value="rolescount"),
+    app_commands.Choice(name="📺 Channels — channel list", value="channels"),
+    app_commands.Choice(name="🚀 Boosts — boost level", value="boosts"),
+    app_commands.Choice(name="👑 Owner — server owner", value="owner"),
+    app_commands.Choice(name="🎂 Created — server birthday", value="created"),
+    app_commands.Choice(name="💤 AFK — AFK channel/timeout", value="afk"),
+    app_commands.Choice(name="🛡️ Verification — safety level", value="verification"),
+    app_commands.Choice(name="🌸 Welcome — auto-welcome On/Off/Status", value="welcome"),
+    app_commands.Choice(name="✨ Features — special features", value="features"),
+    app_commands.Choice(name="⚙️ Settings — protection & welcome On/Off", value="settings"),
+    app_commands.Choice(name="🏅 Badge — member badges", value="badge"),
+    app_commands.Choice(name="🚨 Reports — moderator report inbox", value="reports"),
+    app_commands.Choice(name="🔐 Permissions — channel permissions (mods)", value="permissions"),
+    app_commands.Choice(name="🎮 Scrims — scrim manager", value="scrims"),
+], setting=[
+    app_commands.Choice(name="Welcome", value="welcome"),
+    app_commands.Choice(name="AntiLink", value="antilink"),
+    app_commands.Choice(name="AntiSpam", value="antispam"),
+    app_commands.Choice(name="BadWords", value="badwords"),
+    app_commands.Choice(name="AntiRaid", value="antiraid"),
+    app_commands.Choice(name="AntiNuke", value="antinuke"),
+    app_commands.Choice(name="All Protection", value="all_protection"),
+], mode=[
+    app_commands.Choice(name="Status — show current state", value="status"),
+    app_commands.Choice(name="On — turn on", value="on"),
+    app_commands.Choice(name="Off — turn off", value="off"),
+], report_action=[
+    app_commands.Choice(name="List — open reports", value="list"),
+    app_commands.Choice(name="Resolve — mark resolved", value="resolve"),
+    app_commands.Choice(name="Clear Resolved", value="clear_resolved"),
+    app_commands.Choice(name="Stats — counts", value="stats"),
+], scrim_action=[
+    app_commands.Choice(name="Create (mods)", value="create"),
+    app_commands.Choice(name="List", value="list"),
+    app_commands.Choice(name="Reserve — book my slot", value="reserve"),
+    app_commands.Choice(name="Unreserve — leave my slot", value="unreserve"),
+    app_commands.Choice(name="My Slots", value="my_slots"),
+    app_commands.Choice(name="Slot List", value="slotlist"),
+    app_commands.Choice(name="Close (mods)", value="close"),
+    app_commands.Choice(name="Open (mods)", value="open"),
+    app_commands.Choice(name="Delete (mods)", value="delete"),
+])
+async def server_cmd(interaction: discord.Interaction, action: app_commands.Choice[str], member: discord.Member = None, channel: discord.TextChannel = None, setting: str = "welcome", mode: str = "status", report_action: str = "list", scrim_action: str = "list", name: str = "", time_text: str = "", scrim_id: int = 0, report_id: int = 0, slots: app_commands.Range[int, 2, 100] = 25, slot: int = 0):
+    act=action.value
+    try:
+        if act == "stats": await server_stats(interaction)
+        elif act == "icon": await server_icon(interaction)
+        elif act == "serverbanner": await server_banner(interaction)
+        elif act == "emojis": await server_emojis(interaction)
+        elif act == "rolescount": await server_rolescount(interaction)
+        elif act == "channels": await server_channels(interaction)
+        elif act == "boosts": await server_boosts(interaction)
+        elif act == "owner": await server_owner(interaction)
+        elif act == "created": await server_created(interaction)
+        elif act == "afk": await server_afk(interaction)
+        elif act == "verification": await server_verification(interaction)
+        elif act == "welcome": await server_welcome(interaction, mode)
+        elif act == "features": await server_features(interaction)
+        elif act == "settings": await server_settings(interaction, setting, mode)
+        elif act == "badge": await server_badge(interaction, member)
+        elif act == "reports": await server_reports(interaction, report_action, int(report_id))
+        elif act == "permissions": await server_permissions(interaction, channel, member)
+        elif act == "scrims": await server_scrims(interaction, scrim_action, name, time_text, int(scrim_id), slots, int(slot))
+        else: await interaction.response.send_message("❌ Unknown server action.", ephemeral=True)
+    except Exception:
+        log.warning("server merged command fail\n%s", traceback.format_exc())
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ That server action could not run.", ephemeral=True)
+        except Exception: pass
+
+
+# ---------- /games (helpers) ----------
 _game_state: dict = {}
 _TRIVIA=[
     ("What is the capital of India?", ["Mumbai", "Delhi", "Kolkata", "Chennai"], "b"),
@@ -4855,8 +4922,8 @@ async def games_cmd(interaction: discord.Interaction, action: app_commands.Choic
         except Exception: pass
 
 
-for _grp in (tools_group, text_group, actions_group, server_group):
-    bot.tree.add_command(_grp)
+# Groups khatm — tools/text/actions/server/games ab ek-ek merged command hai
+# (YouTube wala style: pehle action select, phir kaam).
 
 
 # ---------------- MUSIC SYSTEM ----------------
