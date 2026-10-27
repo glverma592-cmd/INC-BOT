@@ -11,6 +11,31 @@ import time
 import urllib.request
 import urllib.error
 
+def _load_local_env():
+    """Key chat/code me nahi — Nezu ki .env se khud le lo (ek hi Termux me hai).
+
+    Jarvis agar INC-BOT/jarvis me hai to Nezu ki key ../bot/.env me milti hai.
+    Pehle se set env ko kabhi badla nahi jata.
+    """
+    from pathlib import Path
+    root = Path(__file__).resolve().parent
+    candidates = [root / ".env", root.parent / "bot" / ".env",
+                  root.parent / ".env", Path.cwd() / ".env"]
+    for p in candidates:
+        try:
+            if not p.exists():
+                continue
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+            return
+        except Exception:
+            continue
+
+
 ALLOWED_ACTIONS = {
     "speak", "toast", "notify", "torch_on", "torch_off", "battery",
     "wifi", "location", "vibrate", "brightness", "open_url", "open_app",
@@ -101,6 +126,7 @@ def rule_plan(text):
 
 def gemini_plan(text, memory_facts=None):
     """Gemini se soch-wala jawab/action. Key na ho to None."""
+    _load_local_env()
     key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not key:
         return None
