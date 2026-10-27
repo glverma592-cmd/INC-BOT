@@ -5004,6 +5004,10 @@ async def _join_voice(channel):
     Phone-net par pehla handshake aksar tootta hai, ek retry me jud jata hai."""
     guild=channel.guild
     vc=guild.voice_client
+    if vc is not None and vc.is_connected() and _voice_recv is not None and _voice_recv.VoiceRecvClient not in type(vc).__mro__:
+        try: await vc.disconnect(force=True)
+        except Exception: pass
+        vc=None
     if vc is not None and vc.is_connected():
         if vc.channel == channel: return vc
         try:
@@ -5163,10 +5167,17 @@ async def _song_autocomplete(interaction: discord.Interaction, current: str):
     except Exception:
         return []
 
-@bot.tree.command(name="vcchat", description="Talk to Nezu: say her name in VC and she will answer out loud")
-@app_commands.describe(action="On/Off/Status or change Style")
-@app_commands.choices(action=[app_commands.Choice(name="On", value="on"), app_commands.Choice(name="Off", value="off"), app_commands.Choice(name="Status", value="status"), app_commands.Choice(name="Style: Japanese 🌸 (cute replies in Japanese)", value="style_japanese"), app_commands.Choice(name="Style: Sweet (default, English)", value="style_sweet")])
-async def vcchat_cmd(interaction: discord.Interaction, action: str = "on"):
+@bot.tree.command(name="vcchat", description="Voice chat with Nezu: listen and answer in VC, or make her speak typed text")
+@app_commands.describe(action="On/Off/Status/Style, or Speak to test her voice", text="Speak action: type the text Nezu should say out loud")
+@app_commands.choices(action=[
+    app_commands.Choice(name="On — start listening in your voice channel", value="on"),
+    app_commands.Choice(name="Off — stop listening", value="off"),
+    app_commands.Choice(name="Status — check voice chat state", value="status"),
+    app_commands.Choice(name="Speak — Nezu will say the typed text out loud (voice test)", value="speak"),
+    app_commands.Choice(name="Style: Japanese 🌸 (cute replies in Japanese)", value="style_japanese"),
+    app_commands.Choice(name="Style: Sweet (default, English)", value="style_sweet"),
+])
+async def vcchat_cmd(interaction: discord.Interaction, action: str = "on", text: str = ""):
     if interaction.guild is None:
         await interaction.response.send_message("❌ This only works inside a server.", ephemeral=True); return
     act=(action or "on").lower().strip()
@@ -5181,22 +5192,59 @@ async def vcchat_cmd(interaction: discord.Interaction, action: str = "on"):
     if act == "status":
         halat="ON 🎙️" if _VOICE_LISTEN.get(guild.id) else "OFF"
         _styl="Japanese 🌸" if _VC_STYLE.get(guild.id) == "japanese" else "Sweet"
-        await interaction.response.send_message(f"🎧 Nezu is listening in VC: **{halat}** • Style: **{_styl}**\n(When it is ON, say: **'Nezuko, how are you?'** — the answer will come in voice!)", ephemeral=True); return
+        await interaction.response.send_message(f"🎧 Nezu voice chat: **{halat}** • Style: **{_styl}**\nTest her voice: `/vcchat` → **Speak** → type any text. Talk to her: `/vcchat` → **On**, then say **'Nezuko, how are you?'**", ephemeral=True); return
     if act == "off":
         _stop_listening(guild)
         await interaction.response.send_message("🔇 Nezu stopped listening in the VC.", ephemeral=True); return
+    if act == "speak":
+        boli=(text or "").strip()
+        if not boli:
+            await interaction.response.send_message("❌ Choose **Speak**, then type something in the **text** box — Nezu will say it out loud in the VC.", ephemeral=True); return
+        await interaction.response.defer(ephemeral=True)
+        vc=guild.voice_client
+        if vc is None or not vc.is_connected():
+            voice=getattr(interaction.user, "voice", None)
+            if not voice or not voice.channel:
+                await interaction.followup.send("❌ First join a **voice channel** yourself, then use `/vcchat` → **Speak**.", ephemeral=True); return
+            try: vc=await _join_voice(voice.channel)
+            except Exception:
+                log.error("vcchat speak join fail\n%s", traceback.format_exc())
+                await interaction.followup.send("⚠️ Nezu could not join your voice channel. Check that she has **Connect + Speak** permission, then try again.", ephemeral=True); return
+        bola=await _speak_in_vc(guild, boli[:300])
+        if bola:
+            await interaction.followup.send(f"🔊 **Nezu spoke in the VC:** “{boli[:300]}”\nIf you heard her, her voice is working. Now try **On** and say: **'Nezuko, how are you?'**", ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Nezu could not speak. In Termux, make sure `ffmpeg`, `libopus` and `opusfile` are installed, restart the bot, then try **Speak** again.", ephemeral=True)
+        return
+    # On: zarurat pade to Nezu khud tumhare VC me aa jayegi (alag se /join nahi karna padega)
     vc=guild.voice_client
-    if vc is None:
-        await interaction.response.send_message("❌ First call Nezu into the VC — join a VC yourself and use `/join`, then `/vcchat On`.", ephemeral=True); return
+    need_join = vc is None or not vc.is_connected() or (_voice_recv is not None and _voice_recv.VoiceRecvClient not in type(vc).__mro__)
+    if need_join:
+        voice=getattr(interaction.user, "voice", None)
+        if not voice or not voice.channel:
+            await interaction.response.send_message("❌ First join a **voice channel** yourself, then use `/vcchat` → **On**. Nezu will come to your channel herself.", ephemeral=True); return
+        await interaction.response.defer()
+        try: vc=await _join_voice(voice.channel)
+        except Exception:
+            log.error("vcchat auto-join fail\n%s", traceback.format_exc())
+            await interaction.followup.send("⚠️ Nezu could not join your voice channel. Check her **Connect + Speak** permission, then try again."); return
+        ok, wajah=_start_listening(guild, interaction.channel.id)
+        if ok:
+            await interaction.followup.send("🎙️ **Nezu is in your VC and listening!** Now speak:\n> **'Nezuko, how are you?'**\nShe will hear her name and answer out loud 🌸\n_(Say her name first; after that you can keep talking for a while without repeating it.)_")
+            asyncio.create_task(_speak_in_vc(guild, "こんにちは、ネズだよ。ゆっくりお話ししようね。" if _VC_STYLE.get(guild.id) == "japanese" else "Yes, I'm here and listening. Tell me, what's up?"))
+        elif wajah == "opus_missing":
+            await interaction.followup.send("⚠️ In Termux, run `pkg install -y libopus opusfile`, restart the bot, then use `/vcchat` → **On** again.")
+        else:
+            await interaction.followup.send("⚠️ Listening could not start — restart the bot and try `/vcchat` → **On** again.")
+        return
     ok, wajah=_start_listening(guild, interaction.channel.id)
     if ok:
-        await interaction.response.send_message("🎙️ **Nezu is listening!** Now speak in the VC:\n> **'Nezuko, how are you?'**\nShe will hear her name and answer out loud 🌸\n_(Say her name before speaking; without her name she will not reply.)_")
+        await interaction.response.send_message("🎙️ **Nezu is listening!** Now speak in the VC:\n> **'Nezuko, how are you?'**\nShe will hear her name and answer out loud 🌸\n_(Say her name first; after that you can keep talking for a while without repeating it.)_")
         asyncio.create_task(_speak_in_vc(guild, "こんにちは、ネズだよ。ゆっくりお話ししようね。" if _VC_STYLE.get(guild.id) == "japanese" else "Yes, I'm here and listening. Tell me, what's up?"))
     elif wajah == "opus_missing":
-        await interaction.response.send_message("⚠️ In Termux, run `pkg install -y libopus opusfile`, restart the bot, then use `/vcchat On`.", ephemeral=True)
+        await interaction.response.send_message("⚠️ In Termux, run `pkg install -y libopus opusfile`, restart the bot, then use `/vcchat` → **On** again.", ephemeral=True)
     else:
-        await interaction.response.send_message("⚠️ Listening could not start — restart the bot and try `/vcchat On` again (or check the log for the 'recording' line).", ephemeral=True)
-
+        await interaction.response.send_message("⚠️ Listening could not start — restart the bot and try `/vcchat` → **On** again.", ephemeral=True)
 
 @bot.tree.command(name="join", description="Call Nezu into your voice channel")
 async def join_cmd(interaction: discord.Interaction):
