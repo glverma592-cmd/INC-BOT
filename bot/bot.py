@@ -1559,6 +1559,28 @@ async def noprefix_cmd(interaction: discord.Interaction, action: app_commands.Ch
         else:
             await interaction.response.send_message(f"ℹ️ {member.mention} does not currently have No Prefix power.", ephemeral=True)
 
+async def _english_media_prompt(prompt: str) -> str:
+    """Image/video prompt kisi bhi language me ho sakta hai.
+    Generation model English sabse acha samajhte hai, isliye zarurat pade to pehle English me badal do."""
+    text=(prompt or "").strip()
+    if not text: return text
+    words=set(re.findall(r"[a-zA-Z]+", text.lower()))
+    hinglish={"ek","ladka","ladki","aadmi","aurat","barish","barsaat","pahad","gaon","sheher","shahar","raat","din","subah","shaam","me","mein","ka","ki","ke","aur","wala","wali","banao","bana","tasveer","dikhao","kutta","billi","haathi","bandar","nadi","samundar","khet","mithaas"}
+    needs=any(ord(ch) > 127 for ch in text) or len(words & hinglish) >= 2
+    if not needs:
+        return text
+    try:
+        out=await _ask_ai_fast(
+            "Convert this image/video generation prompt into one clear, detailed English prompt. "
+            "Return ONLY the English prompt, no explanation, no quotes.\n\nPrompt: " + text[:1200],
+            None, timeout=9, mode="qa")
+    except Exception:
+        return text
+    out=" ".join((out or "").strip().strip('"').split())
+    if len(out) >= 3 and not out.startswith("⚠️"):
+        return out[:1200]
+    return text
+
 _image_cooldown: dict[int, float] = {}
 _video_cooldown: dict[int, float] = {}
 
@@ -1620,7 +1642,8 @@ async def image_cmd(interaction: discord.Interaction, prompt: str):
     await interaction.response.defer()
     ban_rahi=await interaction.followup.send("🎨 **Nezu is creating your image...** 🌸 _(this may take a little while)_")
     try:
-        data=await _refresh_ke_sath(ban_rahi, "🎨 **Nezu is creating your image...** 🌸", _make_image(prompt+", high quality, detailed, vibrant"))
+        gen_prompt=await _english_media_prompt(prompt)
+        data=await _refresh_ke_sath(ban_rahi, "🎨 **Nezu is creating your image...** 🌸", _make_image(gen_prompt+", high quality, detailed, vibrant"))
     except Exception:
         log.error("image fail\n%s", traceback.format_exc())
         try: await ban_rahi.edit(content="⚠️ I could not create the image — please try again in a little while.")
@@ -3610,7 +3633,8 @@ async def tools_video(interaction: discord.Interaction, prompt: str, seconds: ap
     await interaction.response.defer()
     msg=await interaction.followup.send("🎬 **Nezu is creating your video...** 🌸 _(this can take a little while)_")
     try:
-        data=await _refresh_ke_sath(msg, "🎬 **Nezu is creating your video...** 🌸", _make_video(prompt, int(seconds)))
+        gen_prompt=await _english_media_prompt(prompt)
+        data=await _refresh_ke_sath(msg, "🎬 **Nezu is creating your video...** 🌸", _make_video(gen_prompt, int(seconds)))
     except Exception as e:
         log.error("video fail\n%s", traceback.format_exc())
         reason="ffmpeg is missing in Termux (`pkg install -y ffmpeg`)" if "ffmpeg not found" in str(e) else "please try again in a little while"
