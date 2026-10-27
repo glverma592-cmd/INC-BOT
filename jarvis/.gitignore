@@ -7,4 +7,8 @@ chat_history.json
 reminders.json
 photos/
 videos/
+recordings/
+media/
+downloads/
+language.json
 .env

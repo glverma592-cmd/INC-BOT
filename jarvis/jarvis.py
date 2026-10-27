@@ -110,6 +110,24 @@ def execute(plan):
             return actions.set_wallpaper(args.get("path", ""))
         if act == "record":
             return actions.record_audio(int(args.get("seconds", 5)))
+        if act == "set_language":
+            lang = str(args.get("language", "Hinglish")).capitalize()
+            save_json(ROOT / "language.json", {"language": lang})
+            notes = {"Hindi": "ठीक है ARISE, अब मैं हिंदी में बात करूँगा।",
+                     "English": "Okay ARISE, I will reply in English now.",
+                     "Hinglish": "Thik hai ARISE, ab Hinglish me baat karunga.",
+                     "Japanese": "わかりました、ARISE。これからは日本語で話します。"}
+            return notes.get(lang, f"Thik hai ARISE, ab {lang} me baat karunga.")
+        if act == "ai_image":
+            import ai_media
+            path = ai_media.generate_image(args.get("prompt", ""), _media_folder())
+            nezu_bridge.send_to_discord(f"🖼️ Jarvis ne image banayi: {path.name}")
+            return f"🖼️ Image tayyar: {path}"
+        if act == "ai_video":
+            import ai_media
+            path = ai_media.generate_video(args.get("prompt", ""), _media_folder())
+            nezu_bridge.send_to_discord(f"🎬 Jarvis ne video banayi: {path.name}")
+            return f"🎬 Video tayyar: {path}"
         if act == "location":
             return actions.location()
         if act == "vibrate":
@@ -180,8 +198,9 @@ def handle(text):
     if not text:
         return "Kuch bolo ARISE."
     check_reminders()
-    # video command: video /path/file.mp4 shorts / trim ...
-    if text.lower().startswith("video"):
+    # video edit command: video /path/file.mp4 shorts / trim ...
+    # ("video banao ..." AI generation hai, woh dimag ke paas jayega)
+    if text.lower().startswith("video") and ".mp4" in text.lower():
         return handle_video_text(text)
     mem = load_json(MEMORY_FILE, {"facts": []})
     hist = load_json(CHAT_FILE, [])
@@ -236,6 +255,12 @@ def self_check():
                 "termux-notification", "termux-camera-photo"]:
         lines.append(f"📱 {cmd}: " + ("✅" if shutil.which(cmd) else "❌ (Termux:API app chahiye)"))
     lines.append("🤖 Gemini key: " + ("✅ set" if os.environ.get("GEMINI_API_KEY") else "⚠️ nahi — sirf rule commands chalenge"))
+    lines.append("🎙️ Voice sunna: " + ("✅" if shutil.which("termux-speech-to-text") else
+                 ("⚠️ sirf recording+Gemini" if shutil.which("termux-microphone-record") else "❌ Termux:API chahiye")))
+    try:
+        lines.append(f"🗣️ Bhasha: {brain.load_language()}")
+    except Exception:
+        pass
     lines.append(f"🧠 Memory facts: {len(load_json(MEMORY_FILE, {'facts': []}).get('facts', []))} | "
                  f"Purani baatein: {len(load_json(CHAT_FILE, [])) // 2} baat-cheet save")
     lines.append(f"⏰ Pending reminders: {len(_reminders)}")
@@ -301,6 +326,18 @@ def _out_folder():
         return alt
 
 
+def _media_folder():
+    """AI image/video ke liye gallery folder, na mile to project ke andar."""
+    want = Path("/sdcard/Pictures/Jarvis")
+    try:
+        want.mkdir(parents=True, exist_ok=True)
+        return want
+    except Exception:
+        alt = ROOT / "media"
+        alt.mkdir(parents=True, exist_ok=True)
+        return alt
+
+
 def video_cli(argv):
     p = argparse.ArgumentParser(prog="jarvis video")
     p.add_argument("input")
@@ -337,12 +374,43 @@ def video_cli(argv):
     return 0
 
 
+def voice_loop(single=False):
+    """VC jaisi baat: pehle suno -> jo suna woh likho -> phir jawab (awaaz me)."""
+    import voice
+    name = CONFIG.get("assistant_name", "Jarvis")
+    print(f"🎙️ {name} voice mode ON. Bolo — 3-4 second chup rahoge to baat poori mani jayegi.")
+    print("Band karne ke liye bolo: band Karo / exit")
+    while True:
+        print("🎙️ Sun raha hu... bolo")
+        text, _note = voice.listen_once()
+        if not text:
+            msg = "Sunai diya par samajh nahi aaya — ek baar phir aaram se bolo, ya type kar lo."
+            print(f"🤖 {name}: {msg}")
+            actions.speak("Samajh nahi aaya, ek baar phir bolo.")
+            if single:
+                return 0
+            continue
+        print(f"📝 Tumne kaha: “{text}”")
+        if text.strip().lower() in {"band karo", "band Karo", "exit", "quit", "ruk jao"}:
+            actions.speak("Thik hai, milte hai ARISE.")
+            print("👋 Voice mode band.")
+            return 0
+        out = handle(text)
+        print(f"🤖 {name}: {out}")
+        actions.speak(out)  # voice mode me jawab awaaz me hi aayega
+        nezu_bridge.send_to_discord(f"🎙️ ARISE: {text}\n🤖 Jarvis: {out}")
+        if single:
+            return 0
+
+
 def main():
     ap = argparse.ArgumentParser(prog="jarvis")
     ap.add_argument("--once", help="ek command chala ke band")
     ap.add_argument("--serve", action="store_true")
     ap.add_argument("--self-check", action="store_true")
     ap.add_argument("--speak", action="store_true", help="jawab awaaz me bhi bolo")
+    ap.add_argument("--voice", action="store_true", help="voice chat mode (sunna -> likhna -> jawab)")
+    ap.add_argument("--voice-once", action="store_true", help="ek baar voice se sun ke jawab do")
     args, rest = ap.parse_known_args()
 
     if rest and rest[0] == "video":
@@ -353,6 +421,10 @@ def main():
     if args.serve:
         serve()
         return 0
+    if args.voice:
+        return voice_loop(single=False)
+    if args.voice_once:
+        return voice_loop(single=True)
     if args.once:
         out = handle(args.once)
         print(out)

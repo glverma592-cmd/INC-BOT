@@ -96,12 +96,21 @@ def qa_plan(text):
     return None
 
 
+def load_language():
+    """ARISE ne jo bhasha chuni hai (language.json), warna Hinglish."""
+    try:
+        return json.loads((_BRAIN_ROOT / "language.json").read_text(encoding="utf-8")).get("language", "Hinglish")
+    except Exception:
+        return "Hinglish"
+
+
 ALLOWED_ACTIONS = {
     "speak", "toast", "notify", "torch_on", "torch_off", "battery",
     "wifi", "wifi_on", "wifi_off", "location", "vibrate", "brightness", "open_url", "open_app",
     "photo", "device_info", "time", "date", "remember", "none",
     "volume", "media_play", "media_pause", "media_resume", "media_stop",
     "clipboard_get", "clipboard_set", "download", "wallpaper", "record",
+    "set_language", "ai_image", "ai_video",
 }
 
 APP_HINTS = {
@@ -129,6 +138,24 @@ def rule_plan(text):
         return {"action": "forget_all", "args": {}, "reply": "Thik hai, purani saari baatein aur yaadein saaf kar raha hu."}
     if any(w in t for w in [" purani baat", " pehle kya kaha", " last baat", " Pichli baat"]):
         return {"action": "history", "args": {}, "reply": ""}
+
+    # bhasha badlo: "Hindi me baat Karo" / "English me bolo"
+    m = re.search(r"(hindi|english|hinglish|japanese|marathi|bengali|tamil|telugu|punjabi|urdu)\s+(?:me|mein)\s+(?:baat|bolo|jawab)", text, re.I)
+    if m:
+        return {"action": "set_language", "args": {"language": m.group(1).capitalize()},
+                "reply": ""}
+    m = re.search(r"(?:speak|talk|reply)\s+in\s+(hindi|english|hinglish|japanese|marathi|bengali|tamil|telugu|punjabi|urdu)", text, re.I)
+    if m:
+        return {"action": "set_language", "args": {"language": m.group(1).capitalize()},
+                "reply": ""}
+
+    # AI image / AI video banana
+    m = re.match(r"(?:ai\s+)?(?:image|photo|tasveer|picture)\s+(?:banao|bana do|bana|generate|create)\s*[:\-]?\s*(.+)", text.strip(), re.I | re.S)
+    if m:
+        return {"action": "ai_image", "args": {"prompt": m.group(1).strip()}, "reply": "Image bana raha hu."}
+    m = re.match(r"(?:ai\s+)?video\s+(?:banao|bana do|bana|generate|create)\s*[:\-]?\s*(.+)", text.strip(), re.I | re.S)
+    if m:
+        return {"action": "ai_video", "args": {"prompt": m.group(1).strip()}, "reply": "Video bana raha hu."}
 
     # yaad rakho
     m = re.search(r"yaad rakho[:\-]?\s*(.+)", text, re.I)
@@ -251,7 +278,8 @@ def gemini_plan(text, memory_facts=None, history=None):
     facts = "; ".join(memory_facts or []) or "koi saved fact nahi"
     own = load_own_brain()
     persona = own.get("persona") or "You are Jarvis, ARISE's personal phone assistant."
-    extra = ""
+    extra = f"\n\nReply language: {load_language()}. Hamesha isi bhasha me jawab do, " \
+            "jab tak user dusri bhasha na mange. Commands ke naam waise hi rakho."
     if own.get("knowledge"):
         extra += "\n\nJarvis ki apni knowledge (isi ko sabse pehle mano):\n" + own["knowledge"]
     if own.get("qa"):

@@ -102,6 +102,18 @@ def burn_subtitles(inp, srt, outp):
     return str(outp)
 
 
+def image_to_video(img, outp, seconds=5):
+    """Ek AI photo ko halki zoom-motion wali MP4 video banana."""
+    seconds = max(3, min(10, int(seconds)))
+    frames = seconds * 25
+    vf = ("scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,"
+          f"zoompan=z='min(zoom+0.0012,1.4)':d={frames}:s=1280x720:fps=25")
+    _run([_ffmpeg(), "-y", "-loop", "1", "-i", str(img), "-vf", vf,
+          "-t", str(seconds), "-c:v", "libx264", "-preset", "veryfast",
+          "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(outp)])
+    return str(outp)
+
+
 def auto_edit(inp, out_folder, shorts=True, start=0, duration=None, do_compress=False):
     """Ek command me pura kaam: (optional) cut + Shorts + compress."""
     inp = Path(inp)

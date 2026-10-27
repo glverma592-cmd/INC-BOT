@@ -141,6 +141,21 @@ Zaroori: Settings me Termux + MacroDroid ki **battery optimization OFF** Karo,
 aur phone charger/Wi-Fi par rakho. Android kabhi-kabhi phir bhi rok deta hai —
 watchdog use wapas chalu kar deta hai.
 
+## 🎙️ Voice chat + AI media (v4)
+
+```bash
+python jarvis.py --voice
+```
+
+Sunna → jo suna woh likha dikhega → 3–4 sec ki chuppi par jawab awaaz me.
+`Hindi me baat Karo` bologe to Jarvis usi bhasha me jawab dega.
+
+- `image banao ek pahad par mahal` — AI image (`Pictures/Jarvis` me)
+- `video banao samundar ki lehrein` — AI image se motion video
+- `video /path.mp4 shorts bana do` — purani video ki editing (alag kaam)
+
+MacroDroid/Acode/Widget ka pura tarika: **PHONE-SETUP.md**
+
 ## Safety
 
 - Password/OTP/payment/delete/message-bhejna — Jarvis khud nahi karega,
