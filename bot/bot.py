@@ -431,7 +431,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="Owner Tools", value="`/noprefix` • `/tools health` • `/tools youtube` — YouTube: Status / On / Off / Report / Videos / Comments / Upload", inline=False)
     embed.add_field(name="Music & Voice", value="`/play` `/p` `/join` `/skip` `/stop` `/pause` `/resume` `/queue` `/nowplaying` `/autoplay` • `/vcchat` — talk to Nezu in VC", inline=False)
     embed.add_field(name="Utility Groups", value="**/tools**: timestamp, snowflake, uuid, random, b64encode, b64decode, sha256, binary, hex, unit, coinamount, health, youtube\n**/text**: reverse, upper, lower, title, count, repeat, spoiler, mock, vowels, slug", inline=False)
-    embed.add_field(name="Fun & Games", value="**/actions**: hug, pat, slap, wave, highfive, dance, cry, laugh, angry, sleep, eat, thumbsup (with GIFs)\n**/games**: trivia, trivia_answer, riddle, riddle_answer, scramble, scramble_guess, mathquiz, math_answer, numberguess, guess, slots\nAlso: `/coinflip` `/dice` `/choose` `/eightball` `/rps` `/joke` `/fact` `/quote` `/calc` `/password` `/qr` `/color`", inline=False)
+    embed.add_field(name="Fun & Games", value="**/actions**: hug, pat, slap, wave, highfive, dance, cry, laugh, angry, sleep, eat, thumbsup (with GIFs)\n**/games**: trivia, trivia_answer, riddle, riddle_answer, scramble, scramble_guess, mathquiz, math_answer, numberguess, guess, slots, royale\nAlso: `/coinflip` `/dice` `/choose` `/eightball` `/rps` `/joke` `/fact` `/quote` `/calc` `/password` `/qr` `/color`", inline=False)
     embed.add_field(name="Server Group", value="**/server**: stats, icon, serverbanner, emojis, rolescount, channels, boosts, owner, created, afk, verification, welcome, features", inline=False)
     embed.set_footer(text="New members are welcomed automatically — no setup needed.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -3624,6 +3624,239 @@ async def games_slots(interaction: discord.Interaction, amount: app_commands.Ran
         rec["coins"]=bal - amount; result=f"🎰💔 Nothing matched — you lost 🪙 {amount:,}."
     _save_economy()
     await interaction.response.send_message(f"🎰 | {' | '.join(spun)} |\n{result}\n💰 Balance: **🪙 {int(rec['coins']):,}**")
+
+
+# ---------- Discord Battle Royale (browser-game ka Discord version) ----------
+_ROYALE_WEAPONS=[
+    ("Fists", 5, 11, 0.85),
+    ("Pistol", 10, 18, 0.84),
+    ("SMG", 13, 22, 0.88),
+    ("Rifle", 17, 28, 0.86),
+    ("Shotgun", 22, 36, 0.76),
+    ("Sniper", 36, 58, 0.70),
+]
+_ROYALE_BOT_NAMES=[
+    "ShadowFox", "BlazeQueen", "NoScopeNinja", "LootGoblin", "SilentStorm", "PixelReaper",
+    "TurboTiger", "GhostByte", "IronWolf", "VenomVivi", "DarkMeteor", "CaptainClutch",
+    "RapidRaven", "EchoStrike", "FrostByte", "ThunderAstra", "NovaKnight", "RogueRani",
+    "CyberKabir", "MysticMira", "ViperVeer", "OmegaRex", "SolarFlare", "NightHawk",
+    "QuantumQueen", "BlitzBheem", "CrimsonKai", "PhantomIra", "SteelSniper", "WildWizard",
+    "AeroAce", "LunaLaser", "MechaRudra", "ToxicTara", "InfernoIshaan", "ZeroGravity",
+]
+
+def _royale_new_state(user_id: int) -> dict:
+    names=random.sample(_ROYALE_BOT_NAMES, 29)
+    return {
+        "user_id": int(user_id), "hp": 100, "weapon": 1, "medkits": 1,
+        "round": 1, "kills": 0, "bots": [{"name": n, "hp": 100} for n in names],
+        "log": ["🪂 You landed on the island with 29 fighters. Loot fast — the zone will shrink!"],
+        "over": False, "won": False,
+    }
+
+def _royale_hp_bar(hp: int) -> str:
+    filled=max(0, min(10, int(round(max(0, hp)/10))))
+    return "🟩"*filled + "⬛"*(10-filled)
+
+def _royale_embed(state: dict) -> discord.Embed:
+    wname, wmin, wmax, _hit = _ROYALE_WEAPONS[state["weapon"]]
+    alive=len(state["bots"]) + (0 if state["over"] and not state["won"] and state["hp"] <= 0 else 1)
+    if state["over"] and state["won"]:
+        title="🏆 #1 VICTORY ROYALE!"; color=0xf1c40f
+    elif state["over"]:
+        title="💀 ELIMINATED"; color=0xe74c3c
+    else:
+        title="🎮 ARISE ROYALE — Discord Battle Royale"; color=0x9b59b6
+    embed=discord.Embed(title=title, color=color)
+    embed.description="\n".join(f"• {x}" for x in state["log"][-6:])[:3900]
+    embed.add_field(name="❤️ HP", value=f"{_royale_hp_bar(state['hp'])}\n**{state['hp']}/100**", inline=True)
+    embed.add_field(name="👥 Alive", value=f"**{alive}/30**", inline=True)
+    embed.add_field(name="☠️ Kills", value=f"**{state['kills']}**", inline=True)
+    embed.add_field(name="🔫 Weapon", value=f"**{wname}** ({wmin}-{wmax})", inline=True)
+    embed.add_field(name="💊 Medkits", value=f"**{state['medkits']}**", inline=True)
+    embed.add_field(name="⭕ Round / Zone", value=f"**{state['round']}**", inline=True)
+    if state["over"]:
+        place=1 if state["won"] else len(state["bots"])+1
+        embed.add_field(name="🏁 Result", value=f"You finished **#{place}** with **{state['kills']} kills**.", inline=False)
+    embed.set_footer(text="Only the player who started this match can use these buttons.")
+    return embed
+
+def _royale_log(state: dict, text: str):
+    state["log"].append(text)
+    state["log"]=state["log"][-14:]
+
+def _royale_damage_player(state: dict, low: int, high: int, source: str):
+    if state["over"]: return
+    dmg=random.randint(low, high); state["hp"]=max(0, state["hp"]-dmg)
+    _royale_log(state, f"{source} hit you for **{dmg} HP**.")
+    if state["hp"] <= 0:
+        state["over"]=True; state["won"]=False
+        _royale_log(state, "💀 You were eliminated from the island.")
+
+def _royale_find_loot(state: dict, better_chance: bool = False):
+    roll=random.random()
+    weapon_chance=0.48 if better_chance else 0.34
+    if roll < weapon_chance:
+        if state["weapon"] < len(_ROYALE_WEAPONS)-1:
+            state["weapon"] += 1
+            _royale_log(state, f"🎒 You found a better weapon: **{_ROYALE_WEAPONS[state['weapon']][0]}**!")
+        else:
+            state["medkits"] += 1
+            _royale_log(state, "💊 You already have the best weapon, so you picked up a **Medkit** instead.")
+    elif roll < weapon_chance + 0.32:
+        state["medkits"] += 1
+        _royale_log(state, "💊 You found a **Medkit**.")
+    elif roll < weapon_chance + 0.47:
+        heal=random.randint(8, 18); before=state["hp"]; state["hp"]=min(100, state["hp"]+heal)
+        _royale_log(state, f"🩹 You used a bandage and recovered **{state['hp']-before} HP**.")
+    else:
+        _royale_log(state, "📦 This place was empty — only dust and empty crates.")
+
+def _royale_bot_battle(state: dict):
+    bots=state["bots"]
+    if len(bots) <= 1 or state["over"]: return
+    fights=random.randint(1, 3) if len(bots) > 14 else random.randint(0, 2)
+    for _ in range(fights):
+        if len(bots) <= 1: break
+        attacker, victim=random.sample(bots, 2)
+        victim["hp"] -= random.randint(28, 62)
+        if victim["hp"] <= 0:
+            bots.remove(victim)
+            _royale_log(state, f"☠️ **{attacker['name']}** eliminated **{victim['name']}** somewhere on the island.")
+
+def _royale_zone_and_ambush(state: dict, moved: bool):
+    if state["over"]: return
+    if state["round"] % 3 == 0:
+        stage=max(1, state["round"]//3)
+        zone_dmg=5 + stage*4
+        fallen=[]
+        for enemy in list(state["bots"]):
+            enemy["hp"] -= zone_dmg
+            if enemy["hp"] <= 0: fallen.append(enemy)
+        for enemy in fallen: state["bots"].remove(enemy)
+        if fallen:
+            _royale_log(state, f"⭕ The zone swallowed **{len(fallen)} fighter(s)**.")
+        if moved:
+            _royale_log(state, "🏃 You reached the safe zone before it closed.")
+        else:
+            _royale_damage_player(state, zone_dmg, zone_dmg+4, "⭕ The zone")
+            if state["over"]: return
+    ambush_chance=0.10 if moved else 0.27
+    if state["bots"] and random.random() < ambush_chance:
+        enemy=random.choice(state["bots"])
+        _royale_damage_player(state, 7, 16, f"🔫 **{enemy['name']}** ambushed you and")
+
+def _royale_take_turn(state: dict, action: str):
+    if state["over"]: return state
+    moved=False
+    if action == "loot":
+        _royale_find_loot(state, better_chance=True)
+    elif action == "move":
+        moved=True
+        _royale_log(state, "🏃 You rotated toward the safe zone.")
+        if random.random() < 0.42: _royale_find_loot(state)
+    elif action == "heal":
+        if state["medkits"] <= 0:
+            _royale_log(state, "💊 You have no medkits left! Find one with **Loot** or **Move**.")
+        elif state["hp"] >= 100:
+            _royale_log(state, "❤️ Your HP is already full — medkit saved.")
+        else:
+            state["medkits"] -= 1; heal=random.randint(30, 45)
+            before=state["hp"]; state["hp"]=min(100, state["hp"]+heal)
+            _royale_log(state, f"💊 Medkit used: **+{state['hp']-before} HP**.")
+    elif action == "attack":
+        if not state["bots"]:
+            pass
+        else:
+            target=random.choice(state["bots"])
+            wname, wmin, wmax, hit = _ROYALE_WEAPONS[state["weapon"]]
+            if random.random() <= hit:
+                dmg=random.randint(wmin, wmax); target["hp"] -= dmg
+                if target["hp"] <= 0:
+                    state["bots"].remove(target); state["kills"] += 1
+                    _royale_log(state, f"🎯 You eliminated **{target['name']}** with your **{wname}**! (**{dmg} damage**)")
+                else:
+                    _royale_log(state, f"🔫 You hit **{target['name']}** for **{dmg} damage** with your **{wname}**.")
+                    if random.random() < 0.48:
+                        _royale_damage_player(state, 6, 15, f"🔥 **{target['name']}** fired back and")
+                        if state["over"]: return state
+            else:
+                _royale_log(state, f"💨 Your shot missed **{target['name']}**.")
+                if random.random() < 0.35:
+                    _royale_damage_player(state, 5, 12, f"🔥 **{target['name']}** fired back and")
+                    if state["over"]: return state
+    if not state["bots"] and state["hp"] > 0:
+        state["over"]=True; state["won"]=True
+        _royale_log(state, "🏆 You are the last fighter standing!")
+        return state
+    _royale_bot_battle(state)
+    if not state["bots"] and state["hp"] > 0:
+        state["over"]=True; state["won"]=True
+        _royale_log(state, "🏆 You are the last fighter standing!")
+        return state
+    _royale_zone_and_ambush(state, moved)
+    if not state["bots"] and state["hp"] > 0:
+        state["over"]=True; state["won"]=True
+        _royale_log(state, "🏆 You are the last fighter standing!")
+    if not state["over"]: state["round"] += 1
+    return state
+
+class RoyaleGameView(discord.ui.View):
+    def __init__(self, state: dict):
+        super().__init__(timeout=900)
+        self.state=state
+        self.message=None
+        self._sync_buttons()
+
+    def _sync_buttons(self):
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled=bool(self.state["over"])
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.state["user_id"]:
+            await interaction.response.send_message("❌ This is not your Battle Royale match. Start your own with `/games royale`.", ephemeral=True)
+            return False
+        return True
+
+    async def _play(self, interaction: discord.Interaction, action: str):
+        _royale_take_turn(self.state, action)
+        self._sync_buttons()
+        await interaction.response.edit_message(embed=_royale_embed(self.state), view=self)
+        if self.state["over"]: self.stop()
+
+    @discord.ui.button(label="Loot", style=discord.ButtonStyle.primary, emoji="🎒")
+    async def btn_loot(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._play(interaction, "loot")
+
+    @discord.ui.button(label="Attack", style=discord.ButtonStyle.danger, emoji="🔫")
+    async def btn_attack(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._play(interaction, "attack")
+
+    @discord.ui.button(label="Heal", style=discord.ButtonStyle.success, emoji="💊")
+    async def btn_heal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._play(interaction, "heal")
+
+    @discord.ui.button(label="Move to Zone", style=discord.ButtonStyle.secondary, emoji="🏃")
+    async def btn_move(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._play(interaction, "move")
+
+    async def on_timeout(self):
+        if not self.state["over"]:
+            self.state["over"]=True; self.state["won"]=False
+            _royale_log(self.state, "⌛ This match timed out.")
+        self._sync_buttons()
+        if self.message is not None:
+            try: await self.message.edit(embed=_royale_embed(self.state), view=self)
+            except Exception: pass
+
+@games_group.command(name="royale", description="Play a solo Battle Royale against 29 bots with buttons")
+async def games_royale(interaction: discord.Interaction):
+    state=_royale_new_state(interaction.user.id)
+    view=RoyaleGameView(state)
+    await interaction.response.send_message(embed=_royale_embed(state), view=view)
+    try: view.message=await interaction.original_response()
+    except Exception: pass
+
 
 for _grp in (tools_group, text_group, actions_group, server_group, games_group):
     bot.tree.add_command(_grp)
