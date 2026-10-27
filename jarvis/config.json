@@ -1,0 +1,12 @@
+{
+  "assistant_name": "Jarvis",
+  "user_name": "ARISE",
+  "language": "Hinglish",
+  "speak_replies": true,
+  "confirm_before": ["call", "sms", "delete", "share"],
+  "server_host": "127.0.0.1",
+  "server_port": 8765,
+  "local_token": "change-this-token",
+  "download_folder": "/sdcard/Download/Jarvis",
+  "video_output_folder": "/sdcard/Movies/Jarvis"
+}
