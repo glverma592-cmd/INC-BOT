@@ -2987,8 +2987,31 @@ _YT_SCOPES=[
     "https://www.googleapis.com/auth/youtube.readonly",
     "https://www.googleapis.com/auth/yt-analytics.readonly",
 ]
+_YT_STATE_FILE=Path(__file__).resolve().parent/"yt_state.json"
+def _yt_load_enabled():
+    try: return bool(json.loads(_YT_STATE_FILE.read_text(encoding="utf-8")).get("enabled", True))
+    except Exception: return True
+_YT_ENABLED=_yt_load_enabled()
+def _yt_set_enabled(val: bool):
+    global _YT_ENABLED
+    _YT_ENABLED=bool(val)
+    try: _YT_STATE_FILE.write_text(json.dumps({"enabled": _YT_ENABLED}), encoding="utf-8")
+    except Exception: pass
+    return _YT_ENABLED
+def _yt_token_ready():
+    import os as _os
+    f=_os.path.expanduser(_os.environ.get("YT_TOKEN_FILE", "~/.config/yt-agent/token.json"))
+    return _os.path.exists(f) and _os.path.getsize(f) > 0
+def _yt_status_text():
+    return ("📺 **YouTube Status**\n"
+            f"🔘 Haal: **{'ON 🟢' if _YT_ENABLED else 'OFF 🔴'}**\n"
+            f"🔑 Login token: **{'mila ✅' if _yt_token_ready() else 'nahi mila ❌'}**\n"
+            "Channel ki pakki report ke liye: `/tools youtube` → **Report**")
+
 def _yt_service():
     import os as _os
+    if not _YT_ENABLED:
+        raise RuntimeError("YouTube abhi OFF hai. Pehle ON Karo: /tools youtube → On")
     token_file=_os.path.expanduser(_os.environ.get("YT_TOKEN_FILE", "~/.config/yt-agent/token.json"))
     if not _os.path.exists(token_file):
         raise RuntimeError("YouTube login nahi mila. Pehle Termux me youtube_oauth.py chalakar channel connect Karo.")
@@ -3079,37 +3102,13 @@ def _bot_health_text():
             f"⏱️ Uptime: **{uptime}**\n"
             f"📡 Ping: **{ping_ms} ms**\n"
             f"🏠 Servers: **{len(bot.guilds)}**\n"
-            f"📺 YouTube: **{'Connected ✅' if yt_ok else 'Not connected ❌'}**\n"
+            f"📺 YouTube: **{'OFF 🔴' if not _YT_ENABLED else ('Connected ✅' if yt_ok else 'Not connected ❌')}**\n"
             f"💾 Hosting: Termux (phone)")
 
 @tools_group.command(name="health", description="Bot ki health: uptime, ping, YouTube connect hai ya nahi (sirf owner)")
 async def tools_health(interaction: discord.Interaction):
     if not await _yt_owner_gate(interaction): return
     await interaction.response.send_message(_bot_health_text(), ephemeral=True)
-
-@tools_group.command(name="youtube_report", description="Apne YouTube channel ki report (sirf owner)")
-async def tools_youtube_report(interaction: discord.Interaction):
-    if not await _yt_owner_gate(interaction): return
-    await interaction.response.defer(ephemeral=True)
-    try: txt=await asyncio.to_thread(_yt_report_sync)
-    except Exception as e: txt=f"❌ YouTube report fail: {e}"
-    await interaction.followup.send(txt[:1900], ephemeral=True)
-
-@tools_group.command(name="youtube_videos", description="YouTube ki latest videos ki list (sirf owner)")
-async def tools_youtube_videos(interaction: discord.Interaction):
-    if not await _yt_owner_gate(interaction): return
-    await interaction.response.defer(ephemeral=True)
-    try: txt=await asyncio.to_thread(_yt_videos_sync)
-    except Exception as e: txt=f"❌ Videos list fail: {e}"
-    await interaction.followup.send(txt[:1900], ephemeral=True)
-
-@tools_group.command(name="youtube_comments", description="YouTube ke latest comments (sirf owner)")
-async def tools_youtube_comments(interaction: discord.Interaction):
-    if not await _yt_owner_gate(interaction): return
-    await interaction.response.defer(ephemeral=True)
-    try: txt=await asyncio.to_thread(_yt_comments_sync)
-    except Exception as e: txt=f"❌ Comments fail: {e}"
-    await interaction.followup.send(txt[:1900], ephemeral=True)
 
 def _yt_natural_action(content: str, bot_user_id=None):
     text=(content or "").strip()
@@ -3118,6 +3117,9 @@ def _yt_natural_action(content: str, bot_user_id=None):
     norm=" ".join(text.lower().split())
     if norm in ("bot health", "bot status", "nezu health", "nezu status", "health"):
         return ("health", "")
+    if norm in ("yt on", "youtube on"): return ("yt_on", "")
+    if norm in ("yt off", "youtube off"): return ("yt_off", "")
+    if norm in ("yt status", "youtube status"): return ("yt_status", "")
     if norm in ("yt report", "youtube report", "yt channel report", "youtube channel report"):
         return ("report", "")
     if norm in ("yt videos", "youtube videos", "yt latest videos", "youtube latest videos", "yt video list"):
@@ -3156,6 +3158,14 @@ async def _handle_yt_natural(message: discord.Message) -> bool:
     if action == "health":
         await message.reply(_bot_health_text(), mention_author=False)
         return True
+    if action == "yt_on":
+        _yt_set_enabled(True); await message.reply("🟢 **YouTube ON kar diya.**", mention_author=False); return True
+    if action == "yt_off":
+        _yt_set_enabled(False); await message.reply("🔴 **YouTube OFF kar diya.** Report/upload nahi hoga.", mention_author=False); return True
+    if action == "yt_status":
+        await message.reply(_yt_status_text(), mention_author=False); return True
+    if not _YT_ENABLED:
+        await message.reply("🔴 YouTube abhi **OFF** hai. Pehle `yt on` likho.", mention_author=False); return True
     fn={"report": _yt_report_sync, "videos": _yt_videos_sync, "comments": _yt_comments_sync}[action]
     soch=await message.reply("📺 YouTube se data la rahi hoon...", mention_author=False)
     try:
@@ -3165,29 +3175,59 @@ async def _handle_yt_natural(message: discord.Message) -> bool:
     await soch.edit(content=txt[:1900])
     return True
 
-@tools_group.command(name="youtube_upload", description="Discord se video YouTube par upload Karo (sirf owner)")
-@app_commands.describe(video="Video file (max 100MB)", title="Video ka title (na do to file ka naam)", description="Video description", privacy="Private/Unlisted/Public")
-@app_commands.choices(privacy=[
+@tools_group.command(name="youtube", description="YouTube ek hi jagah: Status, On, Off, Report, Videos, Comments, Upload (sirf owner)")
+@app_commands.describe(action="Kya karna hai", video="Upload ke liye video file", title="Upload: title (na do to file ka naam)", description="Upload: description", privacy="Upload: Private/Unlisted/Public")
+@app_commands.choices(action=[
+    app_commands.Choice(name="Status — On/Off aur login hai ya nahi", value="status"),
+    app_commands.Choice(name="On — YouTube chalu Karo", value="on"),
+    app_commands.Choice(name="Off — YouTube band Karo", value="off"),
+    app_commands.Choice(name="Report — channel ki report", value="report"),
+    app_commands.Choice(name="Videos — latest videos", value="videos"),
+    app_commands.Choice(name="Comments — latest comments", value="comments"),
+    app_commands.Choice(name="Upload — video YouTube par daalo", value="upload"),
+], privacy=[
     app_commands.Choice(name="Private — sirf mujhe dikhe", value="private"),
     app_commands.Choice(name="Unlisted — link walo ko dikhe", value="unlisted"),
     app_commands.Choice(name="Public — sabko dikhe", value="public"),
 ])
-async def tools_youtube_upload(interaction: discord.Interaction, video: discord.Attachment, title: str = "", description: str = "", privacy: str = "private"):
+async def tools_youtube(interaction: discord.Interaction, action: str = "status", video: discord.Attachment = None, title: str = "", description: str = "", privacy: str = "private"):
     if not await _yt_owner_gate(interaction): return
-    if video.size > 100*1024*1024:
-        await interaction.response.send_message("❌ File 100MB se badi hai. Chhoti file do, ya Termux wala helper use Karo.", ephemeral=True); return
+    act=(action or "status").lower()
+    if act == "on":
+        _yt_set_enabled(True); await interaction.response.send_message("🟢 **YouTube ON kar diya.**", ephemeral=True); return
+    if act == "off":
+        _yt_set_enabled(False); await interaction.response.send_message("🔴 **YouTube OFF kar diya.** Report/upload nahi hoga.", ephemeral=True); return
+    if act == "status":
+        await interaction.response.send_message(_yt_status_text(), ephemeral=True); return
+    if not _YT_ENABLED:
+        await interaction.response.send_message("🔴 YouTube abhi **OFF** hai. Pehle action **On** chalao.", ephemeral=True); return
     await interaction.response.defer(ephemeral=True)
-    import tempfile as _tf
-    fd, tmp=_tf.mkstemp(prefix="ytup_", suffix=Path(video.filename).suffix or ".mp4"); os.close(fd)
     try:
-        await video.save(tmp)
-        vid, priv=await asyncio.to_thread(_yt_upload_sync, tmp, (title or Path(video.filename).stem)[:100], description, privacy)
-        await interaction.followup.send(f"✅ **YouTube upload complete!** ({priv})\n🔗 https://youtu.be/{vid}", ephemeral=True)
+        if act == "report":
+            txt=await asyncio.to_thread(_yt_report_sync)
+        elif act == "videos":
+            txt=await asyncio.to_thread(_yt_videos_sync)
+        elif act == "comments":
+            txt=await asyncio.to_thread(_yt_comments_sync)
+        elif act == "upload":
+            if video is None:
+                await interaction.followup.send("❌ Upload ke liye **video file** bhi attach Karo.", ephemeral=True); return
+            if video.size > 100*1024*1024:
+                await interaction.followup.send("❌ File 100MB se badi hai. Chhoti file do ya Termux wala tareeka use Karo.", ephemeral=True); return
+            import tempfile as _tf
+            fd, tmp=_tf.mkstemp(prefix="ytup_", suffix=Path(video.filename).suffix or ".mp4"); os.close(fd)
+            try:
+                await video.save(tmp)
+                vid, priv=await asyncio.to_thread(_yt_upload_sync, tmp, (title or Path(video.filename).stem)[:100], description, privacy)
+            finally:
+                try: os.unlink(tmp)
+                except Exception: pass
+            await interaction.followup.send(f"✅ **YouTube upload complete!** ({priv})\n🔗 https://youtu.be/{vid}", ephemeral=True); return
+        else:
+            txt="❌ Galat action."
     except Exception as e:
-        await interaction.followup.send(f"❌ Upload fail: {e}", ephemeral=True)
-    finally:
-        try: os.unlink(tmp)
-        except Exception: pass
+        txt=f"❌ Fail: {e}"
+    await interaction.followup.send(txt[:1900], ephemeral=True)
 
 # ---------- /text (10) ----------
 @text_group.command(name="reverse", description="Text ulta Karo")
