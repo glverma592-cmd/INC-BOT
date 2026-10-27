@@ -434,15 +434,15 @@ _HELP_CATEGORIES={
         "`/calc` `/qr` `/color` `/password` `/invite` `/support`"),
     "fun": ("😄", "Fun", "😄 Fun Commands",
         "**/actions** (with GIFs): hug, pat, slap, wave, highfive, dance, cry, laugh, angry, sleep, eat, thumbsup\n\n"
-        "**/games**: trivia, trivia_answer, riddle, riddle_answer, scramble, scramble_guess, mathquiz, math_answer, numberguess, guess, slots, **royale**, **idp**\n\n"
-        "`/coinflip` `/dice` `/choose` `/eightball` `/rps` `/joke` `/fact` `/quote` `/afk` `/snipe` `/timer`"),
+        "**/games** — ek hi command, pehle **action select Karo**: Trivia, Riddle, Scramble, Math Quiz, Number Guess, Slots, **Battle Royale**, **Room IDP**, Coin Flip, Dice, Choose, 8-Ball, RPS (jawab ke liye wahi command dobara chalakar Answer wala action chunno)\n\n"
+        "`/joke` `/fact` `/quote` `/afk` `/snipe` `/timer` — aur saare chhote games ab **/games** me (action select Karo)"),
     "mod": ("🛡️", "Mod & Protect", "🛡️ Mod & Protect Commands",
         "`/kick` `/ban` `/unban` `/timeout` `/untimeout` `/warn` `/warnings` `/clearwarn` `/clear` `/slowmode` `/lock` `/unlock`\n\n"
         "`/role_add` `/role_remove` `/nickname` `/autorole_bot_add` `/autorole_bot_remove` `/autorole_bot_status` `/setmodlog`\n\n"
         "**Manage everything in one command:** `/server settings` — Welcome, AntiLink, AntiSpam, BadWords, AntiRaid and AntiNuke with Status / On / Off\n**Reports:** `/report` for members, `/server reports` for moderators\n**Scrims:** `/server scrims` — create scrims, reserve slots and post slot lists\n**Protection:** `/antilink` `/antispam` `/badwords` `/antiraid` `/antinuke` `/nuke` `/lockdown` `/quarantine` `/unquarantine` `/purge` `/allnuke` (owner only)"),
     "economy": ("💰", "Economy", "💰 Economy Commands",
         "`/balance` `/daily` `/pay` `/gamble` `/rank` `/leaderboard` `/server badge`\n\n"
-        "**/games slots** — bet Nezu Coins on the slot machine\n"
+        "**/games → Slots** — bet Nezu Coins on the slot machine\n"
         "`/giveaway` — admin/mod giveaway\n"
         "`/remind` `/reminders` `/remind_cancel` — reminders"),
     "anime": ("🌸", "Anime", "🌸 Anime, AI & Voice Commands",
@@ -453,12 +453,12 @@ _HELP_CATEGORIES={
         "**Anime actions:** `/actions hug`, `/actions pat`, `/actions dance`, `/actions wave` and more — all with GIFs\n\n"
         "**Music & Voice:** `/play` `/p` `/join` `/skip` `/stop` `/pause` `/resume` `/queue` `/nowplaying` `/autoplay` `/vcchat`"),
     "mystic": ("🎭", "Mystic", "🎭 Mystic & Luck Commands",
-        "`/eightball` — ask the magic 8-ball\n"
-        "`/choose` — Nezu chooses for you\n"
-        "`/coinflip` `/dice` `/rps` — luck games\n"
+        "`/games` → **8-Ball** — ask the magic 8-ball\n"
+        "`/games` → **Choose** — Nezu chooses for you\n"
+        "`/games` → **Coin Flip / Dice / RPS** — luck games\n"
         "`/fact` `/quote` `/joke` — something new every time\n"
         "`/color` `/password` — random color and password\n"
-        "**/games**: numberguess, guess, mathquiz, scramble, trivia, **royale**"),
+        "**/games** — Number Guess, Math Quiz, Scramble, Trivia, **Battle Royale** — sab ek command me"),
     "welcome": ("📝", "Welcome", "📝 Welcome, Tickets & Server Commands",
         "🌸 **Auto-Welcome is ON by default** — new members are welcomed automatically, no setup needed. Control it with `/server welcome`.\n\n"
         "**Tickets:** `/ticket` `/close` `/tools ticketpanel` — post the HELP / BUG REPORT / IDEA panel\n\n"
@@ -2267,29 +2267,22 @@ async def suggest_cmd(interaction: discord.Interaction, idea: str):
     except Exception:
         pass
 
-@bot.tree.command(name="coinflip", description="Flip a coin — heads or tails")
 async def coinflip_cmd(interaction: discord.Interaction):
     result=random.choice(["🪙 **Heads!**", "🪙 **Tails!**"])
     await interaction.response.send_message(result)
 
-@bot.tree.command(name="dice", description="Roll one or more dice")
-@app_commands.describe(sides="How many sides? (2-1000)", rolls="How many dice? (1-10)")
-async def dice_cmd(interaction: discord.Interaction, sides: app_commands.Range[int, 2, 1000] = 6, rolls: app_commands.Range[int, 1, 10] = 1):
+async def dice_cmd(interaction: discord.Interaction, sides: int = 6, rolls: int = 1):
     results=[random.randint(1, sides) for _ in range(rolls)]
     text=", ".join(f"**{n}**" for n in results)
     extra=f"\n➕ Total: **{sum(results)}**" if rolls > 1 else ""
     await interaction.response.send_message(f"🎲 Dice result: {text}{extra}")
 
-@bot.tree.command(name="choose", description="Let Nezu choose one option for you")
-@app_commands.describe(options="Write options separated by commas, e.g. BGMI, Valorant, CODM")
 async def choose_cmd(interaction: discord.Interaction, options: str):
     choices=[o.strip() for o in options.split(",") if o.strip()]
     if len(choices) < 2:
         await interaction.response.send_message("❌ Please give at least 2 options separated by commas.", ephemeral=True); return
     await interaction.response.send_message(f"🤔 I choose: **{random.choice(choices)}**")
 
-@bot.tree.command(name="eightball", description="Ask the magic 8-ball a yes/no question")
-@app_commands.describe(question="Ask your question")
 async def eightball_cmd(interaction: discord.Interaction, question: str):
     answers=["Yes, definitely! ✅", "No, not this time. ❌", "Most likely yes. 👍", "Very doubtful. 🤔", "Absolutely! 🔥", "Better ask again later. ⏳", "Signs point to yes. ✨", "Do not count on it. ⚠️"]
     embed=discord.Embed(title="🎱 Magic 8-Ball", color=0x2c3e50)
@@ -2297,15 +2290,8 @@ async def eightball_cmd(interaction: discord.Interaction, question: str):
     embed.add_field(name="🔮 Answer", value=random.choice(answers), inline=False)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="rps", description="Play Rock Paper Scissors with Nezu")
-@app_commands.describe(choice="Choose rock, paper, or scissors")
-@app_commands.choices(choice=[
-    app_commands.Choice(name="🪨 Rock", value="rock"),
-    app_commands.Choice(name="📄 Paper", value="paper"),
-    app_commands.Choice(name="✂️ Scissors", value="scissors"),
-])
-async def rps_cmd(interaction: discord.Interaction, choice: app_commands.Choice[str]):
-    user_choice=choice.value
+async def rps_cmd(interaction: discord.Interaction, choice: str):
+    user_choice=choice
     bot_choice=random.choice(["rock", "paper", "scissors"])
     icons={"rock": "🪨 Rock", "paper": "📄 Paper", "scissors": "✂️ Scissors"}
     if user_choice == bot_choice:
@@ -4441,95 +4427,79 @@ _RIDDLES=[
 ]
 _SCRAMBLE_WORDS=["nezuko", "discord", "gaming", "python", "dost", "music", "server", "cricket", "mobile", "duniya"]
 
-@games_group.command(name="trivia", description="Get a question — answer with /games trivia_answer")
 async def games_trivia(interaction: discord.Interaction):
     q, opts, sahi=_TRIVIA[random.randrange(len(_TRIVIA))]
     _game_state[interaction.user.id]={"type": "trivia", "answer": sahi}
     lines="\n".join(f"**{chr(97+i)}.** {o}" for i, o in enumerate(opts))
-    await interaction.response.send_message(f"🧠 **Trivia:** {q}\n{lines}\n\nAnswer with `/games trivia_answer`!")
+    await interaction.response.send_message(f"🧠 **Trivia:** {q}\n{lines}\n\nAnswer with `/games` → **Trivia Answer** (give a, b, c or d in **text**)!")
 
-@games_group.command(name="trivia_answer", description="Answer the trivia question")
-@app_commands.describe(choice="a, b, c or d")
-@app_commands.choices(choice=[app_commands.Choice(name=x, value=x) for x in ("a", "b", "c", "d")])
-async def games_trivia_answer(interaction: discord.Interaction, choice: app_commands.Choice[str]):
+async def games_trivia_answer(interaction: discord.Interaction, choice: str):
     rec=_game_state.get(interaction.user.id)
     if not rec or rec.get("type") != "trivia":
-        await interaction.response.send_message("ℹ️ Get a question first with `/games trivia`.", ephemeral=True); return
+        await interaction.response.send_message("ℹ️ Start a question first with `/games` → **Trivia**.", ephemeral=True); return
     _game_state.pop(interaction.user.id, None)
-    if choice.value == rec["answer"]:
+    if choice == rec["answer"]:
         await interaction.response.send_message(f"🎉 **Correct answer, {interaction.user.mention}!** You win!")
     else:
         await interaction.response.send_message(f"❌ Wrong! The correct answer was **{rec['answer']}**. Try again!")
 
-@games_group.command(name="riddle", description="Get a riddle — answer with /games riddle_answer")
 async def games_riddle(interaction: discord.Interaction):
     q, kabul=_RIDDLES[random.randrange(len(_RIDDLES))]
     _game_state[interaction.user.id]={"type": "riddle", "answers": kabul}
-    await interaction.response.send_message(f"🕵️ **Riddle:** {q}\n\nAnswer with `/games riddle_answer`!")
+    await interaction.response.send_message(f"🕵️ **Riddle:** {q}\n\nAnswer with `/games` → **Riddle Answer** (write it in **text**)!")
 
-@games_group.command(name="riddle_answer", description="Answer the riddle")
-@app_commands.describe(answer="Your answer")
 async def games_riddle_answer(interaction: discord.Interaction, answer: str):
     rec=_game_state.get(interaction.user.id)
     if not rec or rec.get("type") != "riddle":
-        await interaction.response.send_message("ℹ️ Start with `/games riddle` first.", ephemeral=True); return
+        await interaction.response.send_message("ℹ️ Start with `/games` → **Riddle** first.", ephemeral=True); return
     _game_state.pop(interaction.user.id, None)
     if answer.strip().lower() in rec["answers"]:
         await interaction.response.send_message(f"🎉 **You got it, {interaction.user.mention}!**")
     else:
         await interaction.response.send_message(f"❌ No! The answer was: **{rec['answers'][0]}**")
 
-@games_group.command(name="scramble", description="Get a scrambled word — unscramble it with /games scramble_guess")
 async def games_scramble(interaction: discord.Interaction):
     shabd=_SCRAMBLE_WORDS[random.randrange(len(_SCRAMBLE_WORDS))]
     ulta=list(shabd); random.shuffle(ulta); ulta="".join(ulta)
     if ulta == shabd: ulta=shabd[::-1]
     _game_state[interaction.user.id]={"type": "scramble", "answer": shabd}
-    await interaction.response.send_message(f"🔤 **Scramble:** `{ulta}`\nUse `/games scramble_guess` to answer!")
+    await interaction.response.send_message(f"🔤 **Scramble:** `{ulta}`\nuse `/games` → **Scramble Guess** (write the word in **text**) to answer!")
 
-@games_group.command(name="scramble_guess", description="Tell the correct unscrambled word")
-@app_commands.describe(word="Correct word")
 async def games_scramble_guess(interaction: discord.Interaction, word: str):
     rec=_game_state.get(interaction.user.id)
     if not rec or rec.get("type") != "scramble":
-        await interaction.response.send_message("ℹ️ Start with `/games scramble` first.", ephemeral=True); return
+        await interaction.response.send_message("ℹ️ Start with `/games` → **Scramble** first.", ephemeral=True); return
     if word.strip().lower() == rec["answer"]:
         _game_state.pop(interaction.user.id, None)
         await interaction.response.send_message(f"🎉 **Correct!** The word was: **{rec['answer']}**")
     else:
         await interaction.response.send_message("❌ Wrong — try again! (the game is still running)")
 
-@games_group.command(name="mathquiz", description="Get a math question — answer with /games math_answer")
 async def games_mathquiz(interaction: discord.Interaction):
     a, b=random.randint(2, 50), random.randint(2, 30)
     op=random.choice(["+", "-", "*"])
     sahi={"+" : a+b, "-": a-b, "*": a*b}[op]
     _game_state[interaction.user.id]={"type": "math", "answer": sahi}
-    await interaction.response.send_message(f"➗ **Math Quiz:** {a} {op} {b} = ?\nAnswer with `/games math_answer`!")
+    await interaction.response.send_message(f"➗ **Math Quiz:** {a} {op} {b} = ?\nAnswer with `/games` → **Math Answer** (give the number in **number**)!")
 
-@games_group.command(name="math_answer", description="Answer the math quiz (number)")
-@app_commands.describe(answer="Your number answer")
 async def games_math_answer(interaction: discord.Interaction, answer: int):
     rec=_game_state.get(interaction.user.id)
     if not rec or rec.get("type") != "math":
-        await interaction.response.send_message("ℹ️ Start with `/games mathquiz` first.", ephemeral=True); return
+        await interaction.response.send_message("ℹ️ Start with `/games` → **Math Quiz** first.", ephemeral=True); return
     _game_state.pop(interaction.user.id, None)
     if answer == rec["answer"]:
         await interaction.response.send_message(f"🎉 **Absolutely correct, {interaction.user.mention}!**")
     else:
         await interaction.response.send_message(f"❌ Wrong! The correct answer was **{rec['answer']}**.")
 
-@games_group.command(name="numberguess", description="I picked a number between 1-100 — find it with /games guess")
 async def games_numberguess(interaction: discord.Interaction):
     _game_state[interaction.user.id]={"type": "number", "answer": random.randint(1, 100), "tries": 0}
-    await interaction.response.send_message(f"🎯 {interaction.user.mention} I picked a number between **1-100**! Find it with `/games guess`!")
+    await interaction.response.send_message(f"🎯 {interaction.user.mention} I picked a number between **1-100**! Find it with `/games` → **Guess** (give the number in **number**)!")
 
-@games_group.command(name="guess", description="Guess the number")
-@app_commands.describe(number="Your guess (1-100)")
 async def games_guess(interaction: discord.Interaction, number: app_commands.Range[int, 1, 100]):
     rec=_game_state.get(interaction.user.id)
     if not rec or rec.get("type") != "number":
-        await interaction.response.send_message("ℹ️ Start with `/games numberguess` first.", ephemeral=True); return
+        await interaction.response.send_message("ℹ️ Start with `/games` → **Number Guess** first.", ephemeral=True); return
     rec["tries"]+=1
     if number == rec["answer"]:
         tries=rec["tries"]; _game_state.pop(interaction.user.id, None)
@@ -4539,14 +4509,6 @@ async def games_guess(interaction: discord.Interaction, number: app_commands.Ran
     else:
         await interaction.response.send_message("⬇️ It is **lower** than that! Guess again.")
 
-@games_group.command(name="idp", description="Share a game room ID and password in a clean embed")
-@app_commands.describe(room_id="Room ID", password="Room password (optional)", game="Game name")
-@app_commands.choices(game=[
-    app_commands.Choice(name="BGMI / PUBG Mobile", value="BGMI / PUBG Mobile"),
-    app_commands.Choice(name="Free Fire", value="Free Fire"),
-    app_commands.Choice(name="Valorant", value="Valorant"),
-    app_commands.Choice(name="Custom Game", value="Custom Game"),
-])
 async def games_idp(interaction: discord.Interaction, room_id: str, password: str = "", game: str = "BGMI / PUBG Mobile"):
     embed=discord.Embed(title=f"🎮 {game} Room Details", color=0x2ecc71)
     embed.add_field(name="Room ID", value=f"`{str(room_id)[:80]}`", inline=True)
@@ -4555,8 +4517,6 @@ async def games_idp(interaction: discord.Interaction, room_id: str, password: st
     embed.set_footer(text="Join quickly — slots fill fast. Do not share room passwords outside this server.")
     await interaction.response.send_message(embed=embed)
 
-@games_group.command(name="slots", description="Economy coins se slot machine (triple = 5x munafa)")
-@app_commands.describe(amount="How many coins do you want to bet? (minimum 10)")
 async def games_slots(interaction: discord.Interaction, amount: app_commands.Range[int, 10, 100000] = 10):
     if interaction.guild is None:
         await interaction.response.send_message("❌ Slots only works inside a server.", ephemeral=True); return
@@ -4764,7 +4724,7 @@ class RoyaleGameView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.state["user_id"]:
-            await interaction.response.send_message("❌ This is not your Battle Royale match. Start your own with `/games royale`.", ephemeral=True)
+            await interaction.response.send_message("❌ This is not your Battle Royale match. Start your own with `/games` → **Battle Royale**.", ephemeral=True)
             return False
         return True
 
@@ -4799,7 +4759,6 @@ class RoyaleGameView(discord.ui.View):
             try: await self.message.edit(embed=_royale_embed(self.state), view=self)
             except Exception: pass
 
-@games_group.command(name="royale", description="Play a solo Battle Royale against 29 bots with buttons")
 async def games_royale(interaction: discord.Interaction):
     state=_royale_new_state(interaction.user.id)
     view=RoyaleGameView(state)
@@ -4808,7 +4767,95 @@ async def games_royale(interaction: discord.Interaction):
     except Exception: pass
 
 
-for _grp in (tools_group, text_group, actions_group, server_group, games_group):
+@bot.tree.command(name="games", description="All games in one place — first choose an action")
+@app_commands.describe(action="Which game or action?", text="Answer / word / options / 8-ball question / RPS choice (as needed)", number="Number for Guess, Math Answer, Dice sides or Slots bet", rolls="Dice: how many dice (1-10)", room_id="Room IDP: room ID", password="Room IDP: room password (optional)", game="Room IDP: game name")
+@app_commands.choices(action=[
+    app_commands.Choice(name="🧠 Trivia — get a question", value="trivia"),
+    app_commands.Choice(name="🧠 Trivia Answer — answer it (text = a/b/c/d)", value="trivia_answer"),
+    app_commands.Choice(name="🕵️ Riddle — get a riddle", value="riddle"),
+    app_commands.Choice(name="🕵️ Riddle Answer — answer it (text)", value="riddle_answer"),
+    app_commands.Choice(name="🔤 Scramble — get a mixed word", value="scramble"),
+    app_commands.Choice(name="🔤 Scramble Guess — fix the word (text)", value="scramble_guess"),
+    app_commands.Choice(name="➗ Math Quiz — get a maths question", value="mathquiz"),
+    app_commands.Choice(name="➗ Math Answer — answer it (number)", value="math_answer"),
+    app_commands.Choice(name="🎯 Number Guess — start (1-100)", value="numberguess"),
+    app_commands.Choice(name="🎯 Guess — guess the number (number)", value="guess"),
+    app_commands.Choice(name="🎰 Slots — bet coins (number = bet)", value="slots"),
+    app_commands.Choice(name="🏆 Battle Royale — play vs 29 bots", value="royale"),
+    app_commands.Choice(name="🎮 Room IDP — share room ID/password", value="idp"),
+    app_commands.Choice(name="🪙 Coin Flip", value="coinflip"),
+    app_commands.Choice(name="🎲 Dice — roll dice (number = sides)", value="dice"),
+    app_commands.Choice(name="🤔 Choose — Nezu picks one (text = options with commas)", value="choose"),
+    app_commands.Choice(name="🎱 8-Ball — ask a yes/no question (text)", value="eightball"),
+    app_commands.Choice(name="✂️ RPS — rock/paper/scissors (text)", value="rps"),
+], game=[
+    app_commands.Choice(name="BGMI / PUBG Mobile", value="BGMI / PUBG Mobile"),
+    app_commands.Choice(name="Free Fire", value="Free Fire"),
+    app_commands.Choice(name="Valorant", value="Valorant"),
+    app_commands.Choice(name="Custom Game", value="Custom Game"),
+])
+async def games_cmd(interaction: discord.Interaction, action: app_commands.Choice[str], text: str = "", number: int = 0, rolls: app_commands.Range[int, 1, 10] = 1, room_id: str = "", password: str = "", game: str = "BGMI / PUBG Mobile"):
+    act=action.value
+    txt=(text or "").strip()
+    try:
+        if act == "trivia": await games_trivia(interaction)
+        elif act == "trivia_answer":
+            if txt.lower() not in ("a", "b", "c", "d"):
+                await interaction.response.send_message("❌ Give your answer in **text**: a, b, c or d.", ephemeral=True); return
+            await games_trivia_answer(interaction, txt.lower())
+        elif act == "riddle": await games_riddle(interaction)
+        elif act == "riddle_answer":
+            if not txt: await interaction.response.send_message("❌ Write your riddle answer in **text**.", ephemeral=True); return
+            await games_riddle_answer(interaction, txt)
+        elif act == "scramble": await games_scramble(interaction)
+        elif act == "scramble_guess":
+            if not txt: await interaction.response.send_message("❌ Write the correct word in **text**.", ephemeral=True); return
+            await games_scramble_guess(interaction, txt)
+        elif act == "mathquiz": await games_mathquiz(interaction)
+        elif act == "math_answer": await games_math_answer(interaction, int(number))
+        elif act == "numberguess": await games_numberguess(interaction)
+        elif act == "guess":
+            if not (1 <= int(number) <= 100):
+                await interaction.response.send_message("❌ Give your guess in **number** (1-100).", ephemeral=True); return
+            await games_guess(interaction, int(number))
+        elif act == "slots":
+            amount=int(number) if number else 10
+            if not (10 <= amount <= 100000):
+                await interaction.response.send_message("❌ Slots bet must be 10-100000 coins (give it in **number**).", ephemeral=True); return
+            await games_slots(interaction, amount)
+        elif act == "royale": await games_royale(interaction)
+        elif act == "idp":
+            rid=(room_id or txt).strip()
+            if not rid: await interaction.response.send_message("❌ Give the room ID in **room_id**.", ephemeral=True); return
+            await games_idp(interaction, rid, password, game)
+        elif act == "coinflip": await coinflip_cmd(interaction)
+        elif act == "dice":
+            sides=int(number) if number else 6
+            if not (2 <= sides <= 1000):
+                await interaction.response.send_message("❌ Dice sides must be 2-1000 (give in **number**).", ephemeral=True); return
+            await dice_cmd(interaction, sides, int(rolls))
+        elif act == "choose":
+            if "," not in txt: await interaction.response.send_message("❌ Write options in **text**, separated by commas — e.g. BGMI, Valorant, CODM.", ephemeral=True); return
+            await choose_cmd(interaction, txt)
+        elif act == "eightball":
+            if not txt: await interaction.response.send_message("❌ Ask your yes/no question in **text**.", ephemeral=True); return
+            await eightball_cmd(interaction, txt)
+        elif act == "rps":
+            ch=txt.lower()
+            if ch not in ("rock", "paper", "scissors"):
+                await interaction.response.send_message("❌ Write rock, paper or scissors in **text**.", ephemeral=True); return
+            await rps_cmd(interaction, ch)
+        else:
+            await interaction.response.send_message("❌ Unknown game action.", ephemeral=True)
+    except Exception:
+        log.warning("games merged command fail\n%s", traceback.format_exc())
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ The game could not start. Please try again.", ephemeral=True)
+        except Exception: pass
+
+
+for _grp in (tools_group, text_group, actions_group, server_group):
     bot.tree.add_command(_grp)
 
 
