@@ -429,7 +429,7 @@ def _help_command_total() -> int:
 _HELP_CATEGORIES={
     "utility": ("⚡", "Utility", "⚡ Utility Commands",
         "`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo` `/roles` `/banner` `/channelinfo` `/emojiinfo`\n\n"
-        "**/tools**: timestamp, snowflake, uuid, random, b64encode, b64decode, sha256, binary, hex, unit, coinamount, health, ticketpanel, youtube, instagram, embed\n"
+        "**/tools**: timestamp, snowflake, uuid, random, b64encode, b64decode, sha256, binary, hex, unit, coinamount, health, ticketpanel, youtube, instagram, embed, video\n"
         "**/text**: reverse, upper, lower, title, count, repeat, spoiler, mock, vowels, slug\n\n"
         "`/calc` `/qr` `/color` `/password` `/invite` `/support`"),
     "fun": ("😄", "Fun", "😄 Fun Commands",
@@ -1560,27 +1560,59 @@ async def noprefix_cmd(interaction: discord.Interaction, action: app_commands.Ch
             await interaction.response.send_message(f"ℹ️ {member.mention} does not currently have No Prefix power.", ephemeral=True)
 
 _image_cooldown: dict[int, float] = {}
+_video_cooldown: dict[int, float] = {}
+
+def _is_image_bytes(data: bytes) -> bool:
+    return bool(data) and (data.startswith(b"\xff\xd8\xff") or data.startswith(b"\x89PNG") or data[:4] == b"RIFF")
+
+async def _make_image_hf(prompt: str) -> bytes:
+    """Optional open-model image route (Hugging Face). Token sirf .env me: HF_TOKEN."""
+    token=os.environ.get("HF_TOKEN", "").strip()
+    if not token: raise RuntimeError("HF_TOKEN not set")
+    model=os.environ.get("HF_IMAGE_MODEL", "black-forest-labs/FLUX.1-schnell").strip()
+    url=f"https://router.huggingface.co/hf-inference/models/{model}"
+    async with _sess() as session:
+        async with session.post(url, json={"inputs": prompt[:1000]}, headers={"Authorization": f"Bearer {token}", "Accept": "image/jpeg"}, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+            data=await resp.read()
+            if resp.status == 200 and _is_image_bytes(data) and len(data) > 5000:
+                return data
+            raise RuntimeError(f"HF image HTTP {resp.status}: {data[:160]!r}")
+
+async def _make_image_pollinations(prompt: str) -> bytes:
+    """Free image generation (Pollinations). Free limit par ek retry ruk ke hota hai."""
+    last_error=""
+    for attempt, model in enumerate(("flux", "turbo")):
+        seed=random.randint(1, 999999)
+        url="https://image.pollinations.ai/prompt/"+urllib.parse.quote(prompt, safe="")+f"?width=1024&height=1024&nologo=true&model={model}&seed={seed}"
+        async with _sess() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                data=await resp.read()
+                if resp.status == 200 and _is_image_bytes(data) and len(data) > 5000:
+                    return data
+                body=data[:180]
+                last_error=f"HTTP {resp.status} {body!r}"
+                log.warning("image pollinations %s attempt %s: %s", model, attempt, last_error)
+                if resp.status == 402 and attempt == 0:
+                    await asyncio.sleep(46)
+                    continue
+                if resp.status in (429, 500, 502, 503) and attempt == 0:
+                    await asyncio.sleep(6)
+                    continue
+                break
+    raise RuntimeError(last_error or "image generation failed")
 
 async def _make_image(prompt: str) -> bytes:
-    """Free image generation (Pollinations) — koi key nahi chahiye. Free limit: ~1 image/45s, isliye 402 pe ek baar ruk ke dobara."""
-    url="https://image.pollinations.ai/prompt/"+urllib.parse.quote(prompt)+f"?width=1024&height=1024&nologo=true&seed={random.randint(1,999999)}"
-    async with _sess() as session:
-        for attempt in range(2):
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
-                if resp.status == 200:
-                    data=await resp.read()
-                    if len(data) < 5000:
-                        raise RuntimeError("image bohot chhoti aayi")
-                    return data
-                body=(await resp.text())[:200]
-                log.warning("image HTTP %s attempt %s: %s", resp.status, attempt, body)
-                if resp.status != 402 or attempt == 1:
-                    raise RuntimeError(f"image HTTP {resp.status}")
-            await asyncio.sleep(46)
+    """Image banao: HF_TOKEN ho to pehle open-model route, warna free Pollinations. Dono par galat file aaye to rok do."""
+    if os.environ.get("HF_TOKEN", "").strip():
+        try:
+            return await _make_image_hf(prompt)
+        except Exception:
+            log.warning("HF image fail, Pollinations try hoga\n%s", traceback.format_exc())
+    return await _make_image_pollinations(prompt)
 
-@bot.tree.command(name="image", description="Generate an AI image — describe it")
-@app_commands.describe(vivaran="What should appear in the image? (e.g. a BGMI soldier at sunset)")
-async def image_cmd(interaction: discord.Interaction, vivaran: str):
+@bot.tree.command(name="image", description="Generate an AI image — describe it in English")
+@app_commands.describe(prompt="What should appear in the image? (e.g. a BGMI soldier at sunset)")
+async def image_cmd(interaction: discord.Interaction, prompt: str):
     now=time.time()
     if now - _image_cooldown.get(interaction.user.id, 0) < 15:
         await interaction.response.send_message("⏳ Images take time — wait 15 seconds, then try again.", ephemeral=True); return
@@ -1588,16 +1620,87 @@ async def image_cmd(interaction: discord.Interaction, vivaran: str):
     await interaction.response.defer()
     ban_rahi=await interaction.followup.send("🎨 **Nezu is creating your image...** 🌸 _(this may take a little while)_")
     try:
-        data=await _refresh_ke_sath(ban_rahi, "🎨 **Nezu is creating your image...** 🌸", _make_image(vivaran+", high quality, detailed, vibrant"))
+        data=await _refresh_ke_sath(ban_rahi, "🎨 **Nezu is creating your image...** 🌸", _make_image(prompt+", high quality, detailed, vibrant"))
     except Exception:
         log.error("image fail\n%s", traceback.format_exc())
         try: await ban_rahi.edit(content="⚠️ I could not create the image — please try again in a little while.")
         except Exception: await interaction.followup.send("⚠️ I could not create the image — please try again in a little while.")
         return
     try:
-        await ban_rahi.edit(content=f"🎨 For **{interaction.user.display_name}**: {vivaran}", attachments=[discord.File(io.BytesIO(data), filename="ai-image.jpg")])
+        await ban_rahi.edit(content=f"🎨 For **{interaction.user.display_name}**: {prompt}", attachments=[discord.File(io.BytesIO(data), filename="ai-image.jpg")])
     except Exception:
-        await interaction.followup.send(content=f"🎨 For **{interaction.user.display_name}**: {vivaran}", file=discord.File(io.BytesIO(data), filename="ai-image.jpg"))
+        await interaction.followup.send(content=f"🎨 For **{interaction.user.display_name}**: {prompt}", file=discord.File(io.BytesIO(data), filename="ai-image.jpg"))
+
+def _find_ffmpeg() -> str:
+    import shutil as _shutil
+    exe=_shutil.which("ffmpeg")
+    if exe: return exe
+    try:
+        import imageio_ffmpeg as _iio
+        return _iio.get_ffmpeg_exe()
+    except Exception:
+        return ""
+
+async def _make_video_hf(prompt: str) -> bytes:
+    """Optional real text-to-video route (Hugging Face). Fail ho to neeche wala pakka tareeka chalega."""
+    token=os.environ.get("HF_TOKEN", "").strip()
+    if not token: raise RuntimeError("HF_TOKEN not set")
+    model=os.environ.get("HF_VIDEO_MODEL", "damo-vilab/text-to-video-ms-1.7b").strip()
+    url=f"https://router.huggingface.co/hf-inference/models/{model}"
+    async with _sess() as session:
+        async with session.post(url, json={"inputs": prompt[:1000]}, headers={"Authorization": f"Bearer {token}", "Accept": "video/mp4"}, timeout=aiohttp.ClientTimeout(total=180)) as resp:
+            data=await resp.read()
+            if resp.status == 200 and len(data) > 3000 and data[4:8] == b"ftyp":
+                return data
+            raise RuntimeError(f"HF video HTTP {resp.status}: {data[:160]!r}")
+
+async def _make_video_from_image(image_bytes: bytes, seconds: int) -> bytes:
+    ffmpeg=_find_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg not found. In Termux run: pkg install -y ffmpeg")
+    seconds=max(3, min(8, int(seconds or 5)))
+    base=Path(__file__).resolve().parent / "media_tmp"
+    base.mkdir(parents=True, exist_ok=True)
+    import tempfile as _tf
+    work=Path(_tf.mkdtemp(prefix="Nezuvid_", dir=str(base)))
+    img=work/"frame.jpg"; out=work/"video.mp4"
+    try:
+        img.write_bytes(image_bytes)
+        frames=seconds*24
+        vf=("scale=960:540:force_original_aspect_ratio=increase,crop=960:540,"
+            f"zoompan=z='min(zoom+0.0012,1.12)':d={frames}:s=960x540:fps=24,format=yuv420p")
+        proc=await asyncio.create_subprocess_exec(
+            ffmpeg, "-y", "-loop", "1", "-i", str(img), "-vf", vf, "-t", str(seconds),
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart", str(out),
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        try:
+            _so, se=await asyncio.wait_for(proc.communicate(), timeout=150)
+        except asyncio.TimeoutError:
+            try: proc.kill()
+            except Exception: pass
+            raise RuntimeError("video render timeout")
+        if proc.returncode != 0:
+            raise RuntimeError((se or b"")[-300:].decode("utf-8", "ignore"))
+        data=out.read_bytes()
+        if len(data) < 3000 or data[4:8] != b"ftyp":
+            raise RuntimeError("video file did not come out correctly")
+        return data
+    finally:
+        try:
+            for f in work.glob("*"): f.unlink(missing_ok=True)
+            work.rmdir()
+        except Exception: pass
+
+async def _make_video(prompt: str, seconds: int = 5) -> bytes:
+    """Video banao: HF_TOKEN ho to asli text-to-video pehle, warna AI image se smooth zoom wala MP4 (hamesha chalne wala tareeka)."""
+    if os.environ.get("HF_TOKEN", "").strip():
+        try:
+            return await _make_video_hf(prompt)
+        except Exception:
+            log.warning("HF video fail, image-to-video tareeka chalega\n%s", traceback.format_exc())
+    image=await _make_image(prompt+", cinematic scene, rich detail, dramatic light")
+    return await _make_video_from_image(image, seconds)
 
 @bot.tree.command(name="report", description="Report a member to the admins")
 @app_commands.describe(member="Who are you reporting?", reason="What did they do wrong?")
@@ -3495,6 +3598,33 @@ async def tools_instagram(interaction: discord.Interaction, action: str = "statu
     except Exception as e:
         txt=f"❌ Instagram fail: {e}"
     await interaction.followup.send(txt[:1900], ephemeral=True)
+
+
+@tools_group.command(name="video", description="Generate a short AI video (MP4) from a text prompt")
+@app_commands.describe(prompt="Describe the video scene", seconds="Length: 3 to 8 seconds")
+async def tools_video(interaction: discord.Interaction, prompt: str, seconds: app_commands.Range[int, 3, 8] = 5):
+    now=time.time()
+    if now - _video_cooldown.get(interaction.user.id, 0) < 60:
+        await interaction.response.send_message("⏳ One video per minute — please wait a little, then try again.", ephemeral=True); return
+    _video_cooldown[interaction.user.id]=now
+    await interaction.response.defer()
+    msg=await interaction.followup.send("🎬 **Nezu is creating your video...** 🌸 _(this can take a little while)_")
+    try:
+        data=await _refresh_ke_sath(msg, "🎬 **Nezu is creating your video...** 🌸", _make_video(prompt, int(seconds)))
+    except Exception as e:
+        log.error("video fail\n%s", traceback.format_exc())
+        reason="ffmpeg is missing in Termux (`pkg install -y ffmpeg`)" if "ffmpeg not found" in str(e) else "please try again in a little while"
+        try: await msg.edit(content=f"⚠️ I could not create the video — {reason}.")
+        except Exception: await interaction.followup.send(f"⚠️ I could not create the video — {reason}.")
+        return
+    if len(data) > 24*1024*1024:
+        try: await msg.edit(content="⚠️ The video came out too large for Discord. Try a shorter length (3 seconds).")
+        except Exception: pass
+        return
+    try:
+        await msg.edit(content=f"🎬 For **{interaction.user.display_name}**: {prompt}", attachments=[discord.File(io.BytesIO(data), filename="ai-video.mp4")])
+    except Exception:
+        await interaction.followup.send(content=f"🎬 For **{interaction.user.display_name}**: {prompt}", file=discord.File(io.BytesIO(data), filename="ai-video.mp4"))
 
 @tools_group.command(name="youtube", description="YouTube in one place: Status, On, Off, Report, Videos, Comments, Upload (owner only)")
 @app_commands.describe(action="What should I do?", video="Video file for upload", title="Upload title (blank = file name)", description="Upload: description", privacy="Upload: Private/Unlisted/Public")
