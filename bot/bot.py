@@ -926,8 +926,41 @@ _NEZU_QA_SYSTEM = (
 "Use simple, clean English. Use short paragraphs or bullets only when they help. If you are not sure, say so honestly. "
 "Stay under 1800 characters."
 )
-def _ai_system(mode: str = "chat") -> str:
-    return _NEZU_QA_SYSTEM if mode == "qa" else _NEZUKO_FRIEND
+def _ai_system(mode: str = "chat", lang: str = "English") -> str:
+    base=_NEZU_QA_SYSTEM if mode == "qa" else _NEZUKO_FRIEND
+    if lang and lang.strip().lower() not in ("english", "en"):
+        base += (f" LANGUAGE OVERRIDE: Ignore any earlier English-only instruction. "
+                 f"Reply ONLY in {lang}. Keep Nezu's adult (21+) feminine self-reference natural in that language. "
+                 f"Voice replies must stay very short and spoken-natural.")
+    return base
+
+_AI_LANG_WORDS="english|hindi|hinglish|japanese|marathi|bengali|bangla|tamil|telugu|punjabi|gujarati|kannada|malayalam|urdu|korean|chinese|russian|thai"
+_AI_LANG_ALIAS={"bangla": "Bengali"}
+_AI_LANG_BY_USER: dict[tuple[int, int], str] = {}
+def _detect_language_switch(text: str) -> str | None:
+    """User ne bhasha badalne ko kaha to woh bhasha, warna None.
+    Example: 'Hindi me baat Karo', 'speak in English', 'jawab Hindi me do'."""
+    t=" " + (text or "").lower() + " "
+    pats=[
+        rf"\b(?:speak|talk|reply|answer|respond)\s+in\s+({_AI_LANG_WORDS})\b",
+        rf"\b({_AI_LANG_WORDS})\s+(?:me|mein)\s+(?:baat|bolo|jawab|reply|speak|talk)\b",
+        rf"\b(?:baat|bolo|jawab)\s+(?:karo|do)?\s*(?:in\s+)?({_AI_LANG_WORDS})\b",
+        rf"\b({_AI_LANG_WORDS})\s+(?:language|bhasha)\s+(?:me|mein)\b",
+    ]
+    for p in pats:
+        m=re.search(p, t)
+        if m:
+            w=m.group(1).lower()
+            return _AI_LANG_ALIAS.get(w, w.capitalize())
+    return None
+def _language_confirmation(lang: str) -> str:
+    notes={
+        "Hindi": "ठीक है! अब मैं हिंदी में ही बात करूँगी। 🌸",
+        "Hinglish": "Thik hai! Ab main Hinglish me hi baat karungi. 🌸",
+        "Japanese": "わかったよ！これからは日本語で話すね。🌸",
+        "English": "Okay! I will reply in English now. 🌸",
+    }
+    return notes.get(lang, f"Okay! I will reply in {lang} now. 🌸")
 
 async def _refresh_ke_sath(placeholder, label: str, coro):
     """Jawab/image bante time placeholder message me har 1 second me timer update Karo."""
@@ -948,9 +981,9 @@ async def _refresh_ke_sath(placeholder, label: str, coro):
     finally:
         tick.cancel()
 
-async def _ask_pollinations(prompt: str, mode: str = "chat") -> str | None:
+async def _ask_pollinations(prompt: str, mode: str = "chat", lang: str = "English") -> str | None:
     """Last backup AI (Pollinations, bina key ke chalta hai). Gemini fail ho tab use Karo."""
-    full=(_ai_system(mode) + "\n\nUser: " + prompt[:3000])
+    full=(_ai_system(mode, lang) + "\n\nUser: " + prompt[:3000])
     url="https://text.pollinations.ai/" + urllib.parse.quote(full, safe="")
     try:
         async with _sess() as session:
@@ -964,14 +997,14 @@ async def _ask_pollinations(prompt: str, mode: str = "chat") -> str | None:
         log.warning("Pollinations text fail\n%s", traceback.format_exc())
         return None
 
-async def _ask_gemini(prompt: str, history=None, mode: str = "chat") -> str:
+async def _ask_gemini(prompt: str, history=None, mode: str = "chat", lang: str = "English") -> str:
     if mode == "qa": history=None
     if not GEMINI_API_KEY:
-        backup=await _ask_pollinations(prompt, mode)
+        backup=await _ask_pollinations(prompt, mode, lang)
         if backup: return backup
         return "⚠️ AI is not configured yet — the `GEMINI_API_KEY` is missing."
     payload={
-        "system_instruction": {"parts": [{"text": _ai_system(mode) + " Keep answers helpful and under 1800 characters."}]},
+        "system_instruction": {"parts": [{"text": _ai_system(mode, lang) + " Keep answers helpful and under 1800 characters."}]},
         "contents": (history or []) + [{"role": "user", "parts": [{"text": prompt[:4000]}]}],
         "generationConfig": {"maxOutputTokens": 800, "temperature": 0.3 if mode == "qa" else 0.7},
     }
@@ -998,23 +1031,23 @@ async def _ask_gemini(prompt: str, history=None, mode: str = "chat") -> str:
                     continue
     except Exception:
         log.error("Gemini fail\n%s", traceback.format_exc())
-        backup=await _ask_pollinations(prompt, mode)
+        backup=await _ask_pollinations(prompt, mode, lang)
         if backup: return backup
         return "⚠️ Could not reach the AI — please try again in a little while."
     # Gemini ke saare models fail — last backup (bina key wala AI) try Karo
-    backup=await _ask_pollinations(prompt, mode)
+    backup=await _ask_pollinations(prompt, mode, lang)
     if backup: return backup
     if last_status == 429: return "⚠️ The AI free limit is over for now — please try again in a little while."
     if last_status == 503: return "⚠️ The AI is busy right now — please try again in a minute."
     return "⚠️ The AI could not answer right now — please try again in a little while."
 
 
-async def _ask_gemini_once(prompt: str, history=None, timeout: float = 8.0, mode: str = "chat") -> str | None:
+async def _ask_gemini_once(prompt: str, history=None, timeout: float = 8.0, mode: str = "chat", lang: str = "English") -> str | None:
     if mode == "qa": history=None
     """Ek hi tez Gemini model se ek try — race ke liye."""
     if not GEMINI_API_KEY: return None
     payload={
-        "system_instruction": {"parts": [{"text": _ai_system(mode) + " Keep answers helpful and under 1800 characters."}]},
+        "system_instruction": {"parts": [{"text": _ai_system(mode, lang) + " Keep answers helpful and under 1800 characters."}]},
         "contents": (history or []) + [{"role": "user", "parts": [{"text": prompt[:4000]}]}],
         "generationConfig": {"maxOutputTokens": 800, "temperature": 0.3 if mode == "qa" else 0.7},
     }
@@ -1032,7 +1065,7 @@ async def _ask_gemini_once(prompt: str, history=None, timeout: float = 8.0, mode
         log.warning("Gemini-fast fail\n%s", traceback.format_exc())
         return None
 
-async def _ask_ai_fast(prompt: str, history=None, timeout: float = 16.0, mode: str = "chat") -> str:
+async def _ask_ai_fast(prompt: str, history=None, timeout: float = 16.0, mode: str = "chat", lang: str = "English") -> str:
     if mode == "qa": history=None
     """Sabse tez acha jawab: Gemini aur backup ko ek saath daudao —
     jo pehle sahi jawab de, wahi lo, dusre ko wahi rok do. Isiliye jawab jaldi aata hai."""
@@ -1049,8 +1082,8 @@ async def _ask_ai_fast(prompt: str, history=None, timeout: float = 16.0, mode: s
             pol_prompt="Our conversation so far:\n" + "\n".join(lines) + "\n\nUser (just said): " + prompt
     tasks={}
     if GEMINI_API_KEY:
-        tasks[asyncio.create_task(_ask_gemini_once(prompt, history, timeout=min(9.0, timeout), mode=mode))]="gemini"
-    tasks[asyncio.create_task(_ask_pollinations(pol_prompt, mode))]="backup"
+        tasks[asyncio.create_task(_ask_gemini_once(prompt, history, timeout=min(9.0, timeout), mode=mode, lang=lang))]="gemini"
+    tasks[asyncio.create_task(_ask_pollinations(pol_prompt, mode, lang))]="backup"
     deadline=time.time()+timeout
     try:
         pending=set(tasks)
@@ -1069,7 +1102,7 @@ async def _ask_ai_fast(prompt: str, history=None, timeout: float = 16.0, mode: s
         log.warning("ai-fast fail\n%s", traceback.format_exc())
     # dono fail — purana pura Gemini try aakhri ummeed
     try:
-        return await _ask_gemini(prompt, history, mode=mode)
+        return await _ask_gemini(prompt, history, mode=mode, lang=lang)
     except Exception:
         return "⚠️ Could not reach the AI — please try again in a little while."
 
@@ -1323,7 +1356,7 @@ async def ask_cmd(interaction: discord.Interaction, question: str):
     await interaction.response.defer()
     soch=await interaction.followup.send("🌸 **Nezu is thinking...** ✨ _(preparing your answer)_")
     # QA mode: purani baat-cheet yaad nahi rakhti — sirf is ek sawaal ka seedha jawab.
-    jawab=await _refresh_ke_sath(soch, "🌸 **Nezu is thinking...** ✨", _ask_ai_fast(question, None, mode="qa"))
+    jawab=await _refresh_ke_sath(soch, "🌸 **Nezu is thinking...** ✨", _ask_ai_fast(question, None, mode="qa", lang=_detect_language_switch(question) or "English"))
     try:
         await soch.edit(content=f"**{interaction.user.display_name}:** {question}\n\n{jawab}")
     except Exception:
@@ -1725,8 +1758,16 @@ async def on_message(message: discord.Message):
                     soch=await message.reply("🌸 **Nezu is thinking...** ✨ _(preparing your answer)_", mention_author=False)
                 except Exception:
                     pass
+                _lang_key=(message.guild.id if message.guild else 0, message.author.id)
+                _lang_switch=_detect_language_switch(sawal)
+                if _lang_switch:
+                    _AI_LANG_BY_USER[_lang_key]=_lang_switch
+                _lang_pref=_AI_LANG_BY_USER.get(_lang_key, "English")
                 async with message.channel.typing():
-                    jawab=await _refresh_ke_sath(soch, "🌸 **Nezu is thinking...** ✨", _ask_ai_fast(sawal, hist, mode="chat"))
+                    if _lang_switch:
+                        jawab=_language_confirmation(_lang_switch)
+                    else:
+                        jawab=await _refresh_ke_sath(soch, "🌸 **Nezu is thinking...** ✨", _ask_ai_fast(sawal, hist, mode="chat", lang=_lang_pref))
                 hist += [{"role":"user","parts":[{"text":sawal[:2000]}]}, {"role":"model","parts":[{"text":jawab[:2000]}]}]
                 del hist[:-6]
                 boolegi=False
@@ -4983,6 +5024,7 @@ _VC_COOLDOWN: dict[int, float] = {}
 _VC_STYLE: dict[int, str] = {}
 _VC_SPEAKING: dict[int, bool] = {}
 _VC_PROCESSING: set = set()
+_VC_STT_FAIL_NOTICE: dict[int, float] = {}
 
 def _stereo_to_mono(pcm: bytes):
     """Discord opus decoder STEREO (2-channel, 48kHz) PCM deta hai.
@@ -5316,6 +5358,10 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
             _clip=sum(1 for v in _vals if abs(v) >= 32767) * 100 // _n
         except Exception: pass
         log.info("VC awaaz level max=%s rms=%s clip=%s%% (rms 300-4000=saaf boli, 10000+=shor/gadbad)", _mx, _rms, _clip)
+        if _rms and _rms < 180:
+            # bahut halki awaaz/shor — zyada sensitive nahi, ise boli mat mano
+            log.info("VC awaaz bahut halki (rms %s) — chhod diya", _rms)
+            return
         wav48=_pcm_to_wav_48k(pcm, 1)
         wav=_pcm_to_wav(pcm)
         if len(wav48) > 6_000_000: return
@@ -5326,6 +5372,19 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
         log.info("VC STT time %.1fs", time.time()-_t0)
         if not transcript:
             log.warning("STT transcript empty (koi boli samjh nahi aayi)")
+            # Sunai diya par samajh nahi aaya — buri tarah fail nahi, narmi se bata do (baar-baar nahi)
+            if _rms >= 250 and time.time() - _VC_STT_FAIL_NOTICE.get(user_id, 0) > 60:
+                _VC_STT_FAIL_NOTICE[user_id]=time.time()
+                _fch=None
+                _fchid=_VOICE_LISTEN_CH.get(guild.id)
+                if _fchid:
+                    _fch=bot.get_channel(_fchid)
+                    if _fch is None:
+                        try: _fch=await bot.fetch_channel(_fchid)
+                        except Exception: _fch=None
+                if _fch is not None:
+                    try: await _fch.send("👂 I heard a voice, but I could not understand it clearly. Please say it once more, a little closer to the mic. 🌸")
+                    except Exception: pass
             return
         log.info("VC suna user %s: %s", user_id, transcript[:160])
         wake_hit=_find_wake(transcript)
@@ -5347,6 +5406,24 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
             if ch is None:
                 try: ch=await bot.fetch_channel(chid)
                 except Exception: ch=None
+        # Jo suna, woh text me bhi dikhao — user ko pata chale Nezu ne kya suna
+        _speaker=None
+        try: _speaker=guild.get_member(user_id)
+        except Exception: pass
+        _speaker_name=_speaker.display_name if _speaker else "Someone"
+        if ch is not None and transcript:
+            try: await ch.send(f"📝 **{_speaker_name} said:** {transcript[:500]}")
+            except Exception: pass
+        # Bhasha badalne ka hukum VC me bhi chalega: "Hindi me baat Karo"
+        _lang_switch=_detect_language_switch(sawal or transcript)
+        if _lang_switch:
+            _AI_LANG_BY_USER[(guild.id, user_id)]=_lang_switch
+            jawab=_language_confirmation(_lang_switch)
+            if ch is not None:
+                try: await ch.send(f"🎙️ **Nezu VC:** {jawab}")
+                except Exception: pass
+            await _speak_in_vc(guild, jawab)
+            return
         cmd_result=None
         if sawal and len(sawal) >= 2:
             try: cmd_result=await _vc_assistant_command(guild, user_id, sawal, ch)
@@ -5373,14 +5450,17 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
             try: member=guild.get_member(user_id)
             except Exception: pass
             naam=member.display_name if member else "friend"
+            _lang_pref=_AI_LANG_BY_USER.get((guild.id, user_id), "English")
+            _ask_lang=_lang_pref
             prompt_vc=(f"{naam} is talking to you in a voice channel like a friend. They said: {sawal[:1200]}. "
-                       "Reply completely naturally, like a real friend — very short (1-2 sentences, max 40 words), in English only.")
-            if _VC_STYLE.get(guild.id) == "japanese":
+                       f"Reply completely naturally, like a real friend — very short (1-2 sentences, max 40 words), ONLY in {_lang_pref}.")
+            if _VC_STYLE.get(guild.id) == "japanese" and _lang_pref == "English":
+                _ask_lang="Japanese"
                 prompt_vc=(f"{naam} is talking to you in a voice channel. They said: {sawal[:1200]}. "
                            "You are a joyful adult Japanese woman — reply in a soft, cheerful and caring style, "
                            "ONLY in Japanese (日本語), very short (1-2 sentences). Sometimes you may start with a soft sound like 'んー…'.")
             try:
-                jawab=await asyncio.wait_for(_ask_ai_fast(prompt_vc, hist, timeout=10, mode="chat"), timeout=12)
+                jawab=await asyncio.wait_for(_ask_ai_fast(prompt_vc, hist, timeout=10, mode="chat", lang=_ask_lang), timeout=12)
             except Exception:
                 jawab=""
             log.info("VC AI time kul %.1fs", time.time()-_t0)
@@ -5496,15 +5576,16 @@ class _WakeSink(_voice_recv.AudioSink if _voice_recv is not None else object):
             buf=self.buffers.setdefault(uid, bytearray())
             buf.extend(pcm)
             self.last_seen[uid]=time.time()
-            if len(buf) > 48000 * 2 * 2 * 20:  # 20 sec se zyada ek saath na rakhe
-                del buf[:-48000 * 2 * 2 * 10]
+            if len(buf) > 48000 * 2 * 2 * 60:  # 60 sec se zyada ek saath na rakhe
+                del buf[:-48000 * 2 * 2 * 30]
             return
         except Exception:
             pass
     def cleanup(self):
         self.buffers.clear(); self.last_seen.clear(); self._decoders.clear()
     async def watcher(self):
-        """Chup ho jaye to boli ka tukda process karo (0.9 sec ki chuppi = baat khatm)."""
+        """Chup ho jaye to boli ka tukda process karo (3.2 sec ki chuppi = baat khatm,
+        taaki aaram se bolne wale ki baat beech me na kate)."""
         while _VOICE_LISTEN.get(self.guild.id):
             await asyncio.sleep(0.25)
             now=time.time()
@@ -5512,7 +5593,7 @@ class _WakeSink(_voice_recv.AudioSink if _voice_recv is not None else object):
                 buf=self.buffers.get(uid)
                 if not buf: continue
                 dur=len(buf) / (48000 * 2 * 2)
-                if now - last >= 1.05 and dur >= 0.65:
+                if now - last >= 3.2 and dur >= 0.65:
                     pcm=bytes(buf); self.buffers[uid]=bytearray(); self.last_seen.pop(uid, None)
                     log.info("VC boli mili user %s (%.1f sec ki awaaz)", uid, dur)
                     asyncio.create_task(_handle_voice_utterance(self.guild, uid, pcm))
