@@ -429,7 +429,7 @@ def _help_command_total() -> int:
 _HELP_CATEGORIES={
     "utility": ("⚡", "Utility", "⚡ Utility Commands",
         "`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo` `/roles` `/banner` `/channelinfo` `/emojiinfo`\n\n"
-        "**/tools**: timestamp, snowflake, uuid, random, b64encode, b64decode, sha256, binary, hex, unit, coinamount, health, ticketpanel, youtube, instagram, embed, video\n"
+        "**/tools**: timestamp, snowflake, uuid, random, b64encode, b64decode, sha256, binary, hex, unit, coinamount, health, ticketpanel, youtube, embed, video\n"
         "**/text**: reverse, upper, lower, title, count, repeat, spoiler, mock, vowels, slug\n\n"
         "`/calc` `/qr` `/color` `/password` `/invite` `/support`"),
     "fun": ("😄", "Fun", "😄 Fun Commands",
@@ -3743,135 +3743,6 @@ async def _handle_yt_natural(message: discord.Message) -> bool:
     await soch.edit(content=txt[:1900])
     return True
 
-
-# ---------------- INSTAGRAM (Meta Graph API, owner only) ----------------
-_IG_STATE_FILE=Path(__file__).resolve().parent/"ig_state.json"
-def _load_ig_enabled():
-    try: return bool(json.loads(_IG_STATE_FILE.read_text(encoding="utf-8")).get("enabled", True))
-    except Exception: return True
-_IG_ENABLED=_load_ig_enabled()
-def _ig_set_enabled(val: bool):
-    global _IG_ENABLED
-    _IG_ENABLED=bool(val)
-    try: _IG_STATE_FILE.write_text(json.dumps({"enabled": _IG_ENABLED}), encoding="utf-8")
-    except Exception: log.warning("ig state save fail\n%s", traceback.format_exc())
-def _ig_config():
-    return {
-        "token": os.environ.get("IG_ACCESS_TOKEN", "").strip(),
-        "user_id": os.environ.get("IG_USER_ID", "").strip(),
-        "version": os.environ.get("IG_GRAPH_VERSION", "v21.0").strip() or "v21.0",
-    }
-def _ig_connected() -> bool:
-    cfg=_ig_config(); return bool(cfg["token"] and cfg["user_id"])
-def _ig_status_text() -> str:
-    cfg=_ig_config(); connected=_ig_connected()
-    lines=["📸 **Instagram**",
-           f"Power: **{'ON 🟢' if _IG_ENABLED else 'OFF 🔴'}**",
-           f"Connection: **{'Connected ✅' if connected else 'Not connected ❌'}**"]
-    if connected:
-        lines.append(f"Instagram ID: `{cfg['user_id']}`")
-        lines.append("Use Profile, Media, Comments or Post actions.")
-    else:
-        lines.append("Setup: put `IG_ACCESS_TOKEN` and `IG_USER_ID` in the Termux `.env` file, then restart the bot. I will guide you through getting them from the Meta app — never paste the token in chat.")
-    return "\n".join(lines)
-async def _ig_request(method: str, endpoint: str, params: dict = None, data: dict = None) -> dict:
-    cfg=_ig_config()
-    if not (cfg["token"] and cfg["user_id"]):
-        raise RuntimeError("Instagram is not connected yet. Add IG_ACCESS_TOKEN and IG_USER_ID in Termux .env, then restart the bot.")
-    q=dict(params or {}); q["access_token"]=cfg["token"]
-    url=f"https://graph.facebook.com/{cfg['version']}/{endpoint.lstrip('/')}"
-    async with _sess() as session:
-        async with session.request(method, url, params=q if method.upper()=="GET" else None, data=(dict(data or {}, access_token=cfg["token"]) if method.upper()!="GET" else None), timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            payload=await resp.json(content_type=None)
-            if resp.status != 200 or (isinstance(payload, dict) and payload.get("error")):
-                err=(payload.get("error") or {}) if isinstance(payload, dict) else {}
-                raise RuntimeError(err.get("message") or f"Instagram API error ({resp.status})")
-            return payload if isinstance(payload, dict) else {}
-async def _ig_profile_text() -> str:
-    cfg=_ig_config()
-    d=await _ig_request("GET", cfg["user_id"], params={"fields": "id,username,name,account_type,followers_count,follows_count,media_count,biography,website"})
-    return ("📸 **Instagram Profile**\n"
-            f"👤 Username: **@{d.get('username', '?')}**\n"
-            f"🧾 Name: **{d.get('name', '-')}**\n"
-            f"🏷️ Type: **{d.get('account_type', '-')}**\n"
-            f"👥 Followers: **{d.get('followers_count', '-')}** • Following: **{d.get('follows_count', '-')}**\n"
-            f"🎞️ Posts/media: **{d.get('media_count', '-')}**\n"
-            f"🔗 Website: {d.get('website') or '-'}")
-async def _ig_media_text() -> str:
-    cfg=_ig_config()
-    d=await _ig_request("GET", f"{cfg['user_id']}/media", params={"fields": "id,caption,media_type,permalink,timestamp,like_count,comments_count", "limit": 10})
-    items=d.get("data") or []
-    if not items: return "🎞️ No Instagram media found."
-    lines=["🎞️ **Latest Instagram media:**"]
-    for i, m in enumerate(items, 1):
-        cap=" ".join(str(m.get("caption") or "").split())[:90] or "(no caption)"
-        lines.append(f"{i}. [{m.get('media_type', 'MEDIA')}] {cap}\n   ❤️ {m.get('like_count', 0)} • 💬 {m.get('comments_count', 0)} • {m.get('permalink', '')}")
-    return "\n".join(lines)[:1900]
-async def _ig_comments_text() -> str:
-    cfg=_ig_config()
-    media=await _ig_request("GET", f"{cfg['user_id']}/media", params={"fields": "id,caption,permalink", "limit": 5})
-    posts=media.get("data") or []
-    if not posts: return "💬 No posts found, so no comments to show."
-    lines=["💬 **Latest Instagram comments:**"]
-    found=False
-    for post in posts[:5]:
-        try:
-            comments=await _ig_request("GET", f"{post['id']}/comments", params={"fields": "username,text,timestamp,like_count", "limit": 5})
-        except Exception:
-            continue
-        for c in comments.get("data") or []:
-            found=True
-            txt=" ".join(str(c.get("text") or "").split())[:130]
-            lines.append(f"• **@{c.get('username', '?')}**: {txt}")
-            if len(lines) >= 14: return "\n".join(lines)[:1900]
-    if not found: lines.append("No comments found on the latest posts.")
-    return "\n".join(lines)[:1900]
-async def _ig_post_image(image_url: str, caption: str) -> str:
-    cfg=_ig_config()
-    if not image_url.startswith(("https://", "http://")):
-        raise RuntimeError("Post needs a public image URL (https://...). Instagram cannot read a private file directly.")
-    created=await _ig_request("POST", f"{cfg['user_id']}/media", data={"image_url": image_url, "caption": caption[:2200]})
-    creation_id=created.get("id")
-    if not creation_id: raise RuntimeError("Instagram did not return a media container ID.")
-    done=await _ig_request("POST", f"{cfg['user_id']}/media_publish", data={"creation_id": creation_id})
-    return str(done.get("id") or creation_id)
-
-@tools_group.command(name="instagram", description="Instagram in one place: Status, On, Off, Profile, Media, Comments, Post (owner only)")
-@app_commands.describe(action="What should I do?", image_url="Post action: public image URL", caption="Post action: caption")
-@app_commands.choices(action=[
-    app_commands.Choice(name="Status — On/Off and connection", value="status"),
-    app_commands.Choice(name="On — enable Instagram", value="on"),
-    app_commands.Choice(name="Off — disable Instagram", value="off"),
-    app_commands.Choice(name="Profile — account profile", value="profile"),
-    app_commands.Choice(name="Media — latest posts/reels", value="media"),
-    app_commands.Choice(name="Comments — latest comments", value="comments"),
-    app_commands.Choice(name="Post — publish one public image URL", value="post"),
-])
-async def tools_instagram(interaction: discord.Interaction, action: str = "status", image_url: str = "", caption: str = ""):
-    if not await _yt_owner_gate(interaction, "Instagram"): return
-    act=(action or "status").lower()
-    if act == "on":
-        _ig_set_enabled(True); await interaction.response.send_message("🟢 **Instagram is ON.**", ephemeral=True); return
-    if act == "off":
-        _ig_set_enabled(False); await interaction.response.send_message("🔴 **Instagram is OFF.**", ephemeral=True); return
-    if act == "status":
-        await interaction.response.send_message(_ig_status_text(), ephemeral=True); return
-    if not _IG_ENABLED:
-        await interaction.response.send_message("🔴 Instagram is currently **OFF**. Run the **On** action first.", ephemeral=True); return
-    await interaction.response.defer(ephemeral=True)
-    try:
-        if act == "profile": txt=await _ig_profile_text()
-        elif act == "media": txt=await _ig_media_text()
-        elif act == "comments": txt=await _ig_comments_text()
-        elif act == "post":
-            if not image_url:
-                await interaction.followup.send("❌ For **Post**, give a public `image_url` and a caption.", ephemeral=True); return
-            media_id=await _ig_post_image(image_url.strip(), caption)
-            txt=f"✅ **Instagram post published!**\nMedia ID: `{media_id}`"
-        else: txt="❌ Invalid action."
-    except Exception as e:
-        txt=f"❌ Instagram fail: {e}"
-    await interaction.followup.send(txt[:1900], ephemeral=True)
 
 
 @tools_group.command(name="video", description="Generate a short AI video (MP4) from a text prompt")
