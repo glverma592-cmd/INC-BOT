@@ -447,7 +447,7 @@ _HELP_CATEGORIES={
         "`/remind` `/reminders` `/remind_cancel` — reminders"),
     "anime": ("🌸", "Anime", "🌸 Anime, AI & Voice Commands",
         "`/ask` — ask Nezu AI anything\n"
-        "`/chatbot` — tag-only AI chat: On / Off / Status\n"
+        "`/chatbot` — conversational chat mode (On / Off / Status); Nezu chats when tagged\n"
         "`/image` — generate an image\n"
         "`/summarize` — summarize text\n\n"
         "**Anime actions:** `/actions hug`, `/actions pat`, `/actions dance`, `/actions wave` and more — all with GIFs\n\n"
@@ -919,6 +919,16 @@ _NEZUKO_FRIEND = (
 "never use masculine self-reference. "
 "For voice (VC) replies: keep it very short and spoken-natural, 1-2 small sentences. For text chat: friendly and concise."
 )
+_NEZU_QA_SYSTEM = (
+"You are Nezu's question-and-answer assistant. Answer the user's question directly, correctly and clearly. "
+"This is NOT a conversation: do not act like a friend, do not roleplay, do not ask follow-up questions, "
+"do not refer to yourself personally, and do not use conversation memory. Give only the answer to this one question. "
+"Use simple, clean English. Use short paragraphs or bullets only when they help. If you are not sure, say so honestly. "
+"Stay under 1800 characters."
+)
+def _ai_system(mode: str = "chat") -> str:
+    return _NEZU_QA_SYSTEM if mode == "qa" else _NEZUKO_FRIEND
+
 async def _refresh_ke_sath(placeholder, label: str, coro):
     """Jawab/image bante time placeholder message me har 1 second me timer update Karo."""
     if placeholder is None:
@@ -938,9 +948,9 @@ async def _refresh_ke_sath(placeholder, label: str, coro):
     finally:
         tick.cancel()
 
-async def _ask_pollinations(prompt: str) -> str | None:
+async def _ask_pollinations(prompt: str, mode: str = "chat") -> str | None:
     """Last backup AI (Pollinations, bina key ke chalta hai). Gemini fail ho tab use Karo."""
-    full=(_NEZUKO_FRIEND + "\n\nUser: " + prompt[:3000])
+    full=(_ai_system(mode) + "\n\nUser: " + prompt[:3000])
     url="https://text.pollinations.ai/" + urllib.parse.quote(full, safe="")
     try:
         async with _sess() as session:
@@ -954,15 +964,16 @@ async def _ask_pollinations(prompt: str) -> str | None:
         log.warning("Pollinations text fail\n%s", traceback.format_exc())
         return None
 
-async def _ask_gemini(prompt: str, history=None) -> str:
+async def _ask_gemini(prompt: str, history=None, mode: str = "chat") -> str:
+    if mode == "qa": history=None
     if not GEMINI_API_KEY:
-        backup=await _ask_pollinations(prompt)
+        backup=await _ask_pollinations(prompt, mode)
         if backup: return backup
         return "⚠️ AI is not configured yet — the `GEMINI_API_KEY` is missing."
     payload={
-        "system_instruction": {"parts": [{"text": _NEZUKO_FRIEND + " Keep answers helpful and under 1800 characters."}]},
+        "system_instruction": {"parts": [{"text": _ai_system(mode) + " Keep answers helpful and under 1800 characters."}]},
         "contents": (history or []) + [{"role": "user", "parts": [{"text": prompt[:4000]}]}],
-        "generationConfig": {"maxOutputTokens": 800, "temperature": 0.7},
+        "generationConfig": {"maxOutputTokens": 800, "temperature": 0.3 if mode == "qa" else 0.7},
     }
     models=[]
     for m in [GEMINI_MODEL] + _GEMINI_FALLBACK_MODELS:
@@ -987,24 +998,25 @@ async def _ask_gemini(prompt: str, history=None) -> str:
                     continue
     except Exception:
         log.error("Gemini fail\n%s", traceback.format_exc())
-        backup=await _ask_pollinations(prompt)
+        backup=await _ask_pollinations(prompt, mode)
         if backup: return backup
         return "⚠️ Could not reach the AI — please try again in a little while."
     # Gemini ke saare models fail — last backup (bina key wala AI) try Karo
-    backup=await _ask_pollinations(prompt)
+    backup=await _ask_pollinations(prompt, mode)
     if backup: return backup
     if last_status == 429: return "⚠️ The AI free limit is over for now — please try again in a little while."
     if last_status == 503: return "⚠️ The AI is busy right now — please try again in a minute."
     return "⚠️ The AI could not answer right now — please try again in a little while."
 
 
-async def _ask_gemini_once(prompt: str, history=None, timeout: float = 8.0) -> str | None:
+async def _ask_gemini_once(prompt: str, history=None, timeout: float = 8.0, mode: str = "chat") -> str | None:
+    if mode == "qa": history=None
     """Ek hi tez Gemini model se ek try — race ke liye."""
     if not GEMINI_API_KEY: return None
     payload={
-        "system_instruction": {"parts": [{"text": _NEZUKO_FRIEND + " Keep answers helpful and under 1800 characters."}]},
+        "system_instruction": {"parts": [{"text": _ai_system(mode) + " Keep answers helpful and under 1800 characters."}]},
         "contents": (history or []) + [{"role": "user", "parts": [{"text": prompt[:4000]}]}],
-        "generationConfig": {"maxOutputTokens": 800, "temperature": 0.7},
+        "generationConfig": {"maxOutputTokens": 800, "temperature": 0.3 if mode == "qa" else 0.7},
     }
     url=f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     try:
@@ -1020,7 +1032,8 @@ async def _ask_gemini_once(prompt: str, history=None, timeout: float = 8.0) -> s
         log.warning("Gemini-fast fail\n%s", traceback.format_exc())
         return None
 
-async def _ask_ai_fast(prompt: str, history=None, timeout: float = 16.0) -> str:
+async def _ask_ai_fast(prompt: str, history=None, timeout: float = 16.0, mode: str = "chat") -> str:
+    if mode == "qa": history=None
     """Sabse tez acha jawab: Gemini aur backup ko ek saath daudao —
     jo pehle sahi jawab de, wahi lo, dusre ko wahi rok do. Isiliye jawab jaldi aata hai."""
     # backup (Pollinations) ko purani baatein bhi samjhao taaki dost jaisi continuity rahe
@@ -1036,8 +1049,8 @@ async def _ask_ai_fast(prompt: str, history=None, timeout: float = 16.0) -> str:
             pol_prompt="Our conversation so far:\n" + "\n".join(lines) + "\n\nUser (just said): " + prompt
     tasks={}
     if GEMINI_API_KEY:
-        tasks[asyncio.create_task(_ask_gemini_once(prompt, history, timeout=min(9.0, timeout)))]="gemini"
-    tasks[asyncio.create_task(_ask_pollinations(pol_prompt))]="backup"
+        tasks[asyncio.create_task(_ask_gemini_once(prompt, history, timeout=min(9.0, timeout), mode=mode))]="gemini"
+    tasks[asyncio.create_task(_ask_pollinations(pol_prompt, mode))]="backup"
     deadline=time.time()+timeout
     try:
         pending=set(tasks)
@@ -1056,7 +1069,7 @@ async def _ask_ai_fast(prompt: str, history=None, timeout: float = 16.0) -> str:
         log.warning("ai-fast fail\n%s", traceback.format_exc())
     # dono fail — purana pura Gemini try aakhri ummeed
     try:
-        return await _ask_gemini(prompt, history)
+        return await _ask_gemini(prompt, history, mode=mode)
     except Exception:
         return "⚠️ Could not reach the AI — please try again in a little while."
 
@@ -1300,23 +1313,21 @@ async def giveaway_cmd(interaction: discord.Interaction, prize: str, duration: s
     _giveaways[message.id]=data; _save_giveaways(); _schedule_giveaway(message.id)
     await interaction.followup.send(f"✅ **Giveaway started!** 🎉\n🎁 Prize: **{prize}**\n⏰ Duration: **{_format_duration(seconds)}**\n🏆 Winners: **{winners}**\n📍 {message.jump_url}", ephemeral=True)
 
-@bot.tree.command(name="ask", description="Ask the AI anything")
-@app_commands.describe(sawal="What do you want to ask?")
-async def ask_cmd(interaction: discord.Interaction, sawal: str):
+@bot.tree.command(name="ask", description="Ask one question and get a direct AI answer (no chat mode)")
+@app_commands.describe(question="Your question")
+async def ask_cmd(interaction: discord.Interaction, question: str):
     now=time.time()
     if now - _ask_cooldown.get(interaction.user.id, 0) < 5:
         await interaction.response.send_message("⏳ Wait 5 seconds, then ask again.", ephemeral=True); return
     _ask_cooldown[interaction.user.id]=now
     await interaction.response.defer()
     soch=await interaction.followup.send("🌸 **Nezu is thinking...** ✨ _(preparing your answer)_")
-    hist=_memory.setdefault((interaction.guild.id if interaction.guild else 0, interaction.user.id), [])
-    jawab=await _refresh_ke_sath(soch, "🌸 **Nezu is thinking...** ✨", _ask_ai_fast(sawal, hist))
-    hist += [{"role":"user","parts":[{"text":sawal[:2000]}]}, {"role":"model","parts":[{"text":jawab[:2000]}]}]
-    del hist[:-6]
+    # QA mode: purani baat-cheet yaad nahi rakhti — sirf is ek sawaal ka seedha jawab.
+    jawab=await _refresh_ke_sath(soch, "🌸 **Nezu is thinking...** ✨", _ask_ai_fast(question, None, mode="qa"))
     try:
-        await soch.edit(content=f"**{interaction.user.display_name}:** {sawal}\n\n{jawab}")
+        await soch.edit(content=f"**{interaction.user.display_name}:** {question}\n\n{jawab}")
     except Exception:
-        await interaction.followup.send(f"**{interaction.user.display_name}:** {sawal}\n\n{jawab}")
+        await interaction.followup.send(f"**{interaction.user.display_name}:** {question}\n\n{jawab}")
 
 # ---------------- VOICE CHAT (VC me Nezuko tumse baat karegi) ----------------
 def _pick_edge_voice(text: str) -> str:
@@ -1419,6 +1430,7 @@ def _save_chatbot_channels():
     except Exception:
         log.warning("chatbot channels save fail\n%s", traceback.format_exc())
 _memory: dict[tuple[int, int], list] = {}
+_chat_memory: dict[tuple[int, int], list] = {}
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -1445,14 +1457,14 @@ async def on_message(message: discord.Message):
             now=time.time()
             if now - _ask_cooldown.get(message.author.id, 0) >= 5:
                 _ask_cooldown[message.author.id]=now
-                hist=_memory.setdefault((message.guild.id if message.guild else 0, message.author.id), [])
+                hist=_chat_memory.setdefault((message.guild.id if message.guild else 0, message.author.id), [])
                 soch=None
                 try:
                     soch=await message.reply("🌸 **Nezu is thinking...** ✨ _(preparing your answer)_", mention_author=False)
                 except Exception:
                     pass
                 async with message.channel.typing():
-                    jawab=await _refresh_ke_sath(soch, "🌸 **Nezu is thinking...** ✨", _ask_ai_fast(sawal, hist))
+                    jawab=await _refresh_ke_sath(soch, "🌸 **Nezu is thinking...** ✨", _ask_ai_fast(sawal, hist, mode="chat"))
                 hist += [{"role":"user","parts":[{"text":sawal[:2000]}]}, {"role":"model","parts":[{"text":jawab[:2000]}]}]
                 del hist[:-6]
                 boolegi=False
@@ -1469,10 +1481,10 @@ async def on_message(message: discord.Message):
                     await message.reply(jawab)
     await bot.process_commands(message)
 
-@bot.tree.command(name="chatbot", description="Tag-only AI chat for this channel: Nezu replies only when mentioned (admin)")
+@bot.tree.command(name="chatbot", description="Conversational chat mode for this channel: Nezu chats when mentioned (admin)")
 @app_commands.describe(action="Choose On, Off, or Status — default is On")
 @app_commands.choices(action=[
-    app_commands.Choice(name="On — reply only when Nezu is tagged", value="on"),
+    app_commands.Choice(name="On — conversational chat when Nezu is tagged", value="on"),
     app_commands.Choice(name="Off — stop tag replies everywhere", value="off"),
     app_commands.Choice(name="Status — check whether tag chat is on", value="status"),
 ])
@@ -1488,7 +1500,7 @@ async def chatbot_cmd(interaction: discord.Interaction, action: str = "on"):
         _tag_chatbot_master_on=True
         _tag_chatbot_channels.add(interaction.channel.id); _save_chatbot_channels()
         log.info("chatbot: tag chat ON in channel %s by %s", interaction.channel.id, interaction.user)
-        await interaction.response.send_message("🤖 **Chatbot ON!** ✅\nFrom now on, Nezu will reply in this channel **only when someone tags/mentions her** with a question.\nExample: `@Nezu What is the capital of India?`\n\nUse `/chatbot` and choose **Off** to stop tag replies everywhere.")
+        await interaction.response.send_message("🤖 **Chatbot ON — chat mode!** ✅\nFrom now on, Nezu will hold a friendly conversation in this channel **whenever someone tags/mentions her**, and she will remember the recent conversation.\nExample: `@Nezu hey, how are you?`\n\nFor a single direct answer instead, use `/ask`. Use `/chatbot` → **Off** to stop chat mode everywhere.")
     elif action == "off":
         if not _tag_chatbot_master_on and not _tag_chatbot_channels:
             await interaction.response.send_message("ℹ️ Chatbot is already OFF everywhere.", ephemeral=True); return
@@ -1498,7 +1510,7 @@ async def chatbot_cmd(interaction: discord.Interaction, action: str = "on"):
         await interaction.response.send_message("🤖 **Chatbot is OFF everywhere.** ✅\nNezu will no longer reply when tagged in any channel. To turn it back on, run `/chatbot` in a channel and choose **On**.", ephemeral=True)
     else:
         if _tag_chatbot_master_on and interaction.channel.id in _tag_chatbot_channels:
-            await interaction.response.send_message("🤖 Tag chat is **ON** in this channel — Nezu replies when she is tagged/mentioned.", ephemeral=True)
+            await interaction.response.send_message("🤖 Chatbot chat mode is **ON** in this channel — Nezu chats and remembers the conversation when she is tagged/mentioned. For one direct answer, use `/ask`.", ephemeral=True)
         elif _tag_chatbot_master_on and _tag_chatbot_channels:
             await interaction.response.send_message("🤖 Tag chat is ON in another channel, but **OFF in this channel**.", ephemeral=True)
         else:
@@ -1625,7 +1637,7 @@ async def summarize_cmd(interaction: discord.Interaction, count: int = 20):
     lines.reverse()
     if len(lines) < 3:
         await interaction.followup.send("ℹ️ There are not enough messages in this channel to summarize."); return
-    jawab=await _ask_gemini("Summarize this Discord chat in clear English bullet points (max 6 points, short):\n\n" + "\n".join(lines))
+    jawab=await _ask_gemini("Summarize this Discord chat in clear English bullet points (max 6 points, short):\n\n" + "\n".join(lines, mode="qa"))
     await interaction.followup.send(f"📝 **Summary of the last {len(lines)} messages:**\n\n{jawab}")
 
 _JOKES=[
@@ -4810,7 +4822,7 @@ async def _handle_voice_utterance(guild, user_id: int, pcm: bytes):
                            "You are a cute Japanese anime girl — reply in a very soft, slightly sleepy and caring style, "
                            "ONLY in Japanese (日本語), very short (1-2 sentences). Sometimes you may start with a soft sound like 'んー…'.")
             try:
-                jawab=await asyncio.wait_for(_ask_ai_fast(prompt_vc, hist, timeout=10), timeout=12)
+                jawab=await asyncio.wait_for(_ask_ai_fast(prompt_vc, hist, timeout=10, mode="chat"), timeout=12)
             except Exception:
                 jawab=""
             log.info("VC AI time kul %.1fs", time.time()-_t0)
