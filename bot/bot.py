@@ -113,6 +113,7 @@ async def setup_hook():
     bot.add_view(VerifyButton())
     bot.add_view(GiveawayView())
     bot.add_view(MusicPanelView())
+    bot.add_view(TicketPanelView())
     # SIRF global sync — guild copies banaoge to Discord me har command 2-2 dikhega
     try:
         await bot.tree.sync()
@@ -425,7 +426,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="Server & Users", value="`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo` `/roles` `/banner` `/channelinfo` `/emojiinfo`", inline=False)
     embed.add_field(name="Announcements", value="`/say` `/announce` `/dm` `/report` `/poll` `/invite` `/support` `/rules` `/suggest`", inline=False)
     embed.add_field(name="AI & Images", value="`/ask` — ask the AI • `/chatbot` — tag-only AI chat (On/Off/Status) • `/summarize` • `/image` — generate an image", inline=False)
-    embed.add_field(name="Levels, Tickets & Economy", value="`/rank` `/leaderboard` `/ticket` `/close` `/remind` `/reminders` `/remind_cancel` `/balance` `/daily` `/pay` `/gamble` `/afk` `/snipe` `/timer`", inline=False)
+    embed.add_field(name="Levels, Tickets & Economy", value="`/rank` `/leaderboard` `/ticket` `/close` `/tools ticketpanel` `/remind` `/reminders` `/remind_cancel` `/balance` `/daily` `/pay` `/gamble` `/afk` `/snipe` `/timer`", inline=False)
     embed.add_field(name="AutoMod & Security", value="`/antilink` `/antispam` `/badwords` `/antiraid` `/setmodlog` `/antinuke` `/nuke` `/lockdown` `/quarantine` `/unquarantine` `/purge` `/allnuke` (owner only)", inline=False)
     embed.add_field(name="Owner Tools", value="`/noprefix` • `/tools health` • `/tools youtube` — YouTube: Status / On / Off / Report / Videos / Comments / Upload", inline=False)
     embed.add_field(name="Music & Voice", value="`/play` `/p` `/join` `/skip` `/stop` `/pause` `/resume` `/queue` `/nowplaying` `/autoplay` • `/vcchat` — talk to Nezu in VC", inline=False)
@@ -2001,20 +2002,17 @@ def _save_tickets():
     except Exception:
         log.warning("tickets save fail\n%s", traceback.format_exc())
 
-@bot.tree.command(name="ticket", description="Open a private support ticket")
-@app_commands.describe(reason="What do you need help with?")
-async def ticket_cmd(interaction: discord.Interaction, reason: str = "Support"):
-    if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
-        await interaction.response.send_message("❌ Please use this inside a server text channel.", ephemeral=True); return
-    reason=reason.strip()[:300] or "Support"
+async def _create_ticket_thread(interaction: discord.Interaction, category: str = "Support", reason: str = ""):
+    """Ticket thread banao. Interaction pehle se defer ho chuka ho — jawab followup se jayega."""
+    reason=(reason or category).strip()[:300] or category
     for tid, data in _tickets.items():
         if data.get("open") and data.get("guild_id") == interaction.guild.id and data.get("user_id") == interaction.user.id:
-            await interaction.response.send_message(f"ℹ️ You already have an open ticket: <#{tid}>", ephemeral=True); return
-    await interaction.response.defer(ephemeral=True)
-    safe_name=re.sub(r"[^a-z0-9-]", "", interaction.user.name.lower().replace(" ", "-"))[:30] or "member"
+            await interaction.followup.send(f"ℹ️ You already have an open ticket: <#{tid}>", ephemeral=True); return
+    safe_name=re.sub(r"[^a-z0-9-]", "", interaction.user.name.lower().replace(" ", "-"))[:24] or "member"
+    cat_slug=re.sub(r"[^a-z0-9-]", "", category.lower().replace(" ", "-"))[:12] or "support"
     try:
         thread=await interaction.channel.create_thread(
-            name=f"ticket-{safe_name}"[:90],
+            name=f"ticket-{cat_slug}-{safe_name}"[:90],
             type=discord.ChannelType.private_thread,
             auto_archive_duration=1440,
             invitable=False,
@@ -2031,16 +2029,47 @@ async def ticket_cmd(interaction: discord.Interaction, reason: str = "Support"):
         owner=interaction.guild.owner or await interaction.guild.fetch_member(interaction.guild.owner_id)
         if owner and owner.id != interaction.user.id: await thread.add_user(owner)
     except Exception: pass
-    _tickets[str(thread.id)]={"guild_id": interaction.guild.id, "channel_id": interaction.channel.id, "user_id": interaction.user.id, "reason": reason, "open": True, "created_at": datetime.datetime.now(datetime.timezone.utc).timestamp()}
+    _tickets[str(thread.id)]={"guild_id": interaction.guild.id, "channel_id": interaction.channel.id, "user_id": interaction.user.id, "category": category, "reason": reason, "open": True, "created_at": datetime.datetime.now(datetime.timezone.utc).timestamp()}
     _save_tickets()
     try:
         embed=discord.Embed(title="🎫 Support Ticket", color=0x3498db)
         embed.add_field(name="Member", value=interaction.user.mention, inline=True)
-        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Category", value=category, inline=True)
+        embed.add_field(name="Details", value=reason, inline=False)
         embed.set_footer(text="Explain your problem here. A moderator will help you. Use /close when done.")
         await thread.send(content=f"👋 {interaction.user.mention} Welcome to support!", embed=embed)
     except Exception: pass
     await interaction.followup.send(f"✅ Ticket created: {thread.mention}", ephemeral=True)
+
+class TicketPanelView(discord.ui.View):
+    """#ticket channel wala panel — HELP / BUG REPORT / IDEA FOR US? buttons (persistent)."""
+    def __init__(self): super().__init__(timeout=None)
+
+    async def _press(self, interaction: discord.Interaction, category: str):
+        if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message("❌ Please use this inside a server text channel.", ephemeral=True); return
+        await interaction.response.defer(ephemeral=True)
+        await _create_ticket_thread(interaction, category=category)
+
+    @discord.ui.button(label="HELP", style=discord.ButtonStyle.success, emoji="🎟️", custom_id="nezu:ticket_help")
+    async def btn_help(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._press(interaction, "Help")
+
+    @discord.ui.button(label="BUG REPORT", style=discord.ButtonStyle.success, emoji="🎟️", custom_id="nezu:ticket_bug")
+    async def btn_bug(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._press(interaction, "Bug Report")
+
+    @discord.ui.button(label="IDEA FOR US?", style=discord.ButtonStyle.success, emoji="🎟️", custom_id="nezu:ticket_idea")
+    async def btn_idea(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._press(interaction, "Idea For Us")
+
+@bot.tree.command(name="ticket", description="Open a private support ticket")
+@app_commands.describe(reason="What do you need help with?")
+async def ticket_cmd(interaction: discord.Interaction, reason: str = "Support"):
+    if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
+        await interaction.response.send_message("❌ Please use this inside a server text channel.", ephemeral=True); return
+    await interaction.response.defer(ephemeral=True)
+    await _create_ticket_thread(interaction, category="Support", reason=reason)
 
 @bot.tree.command(name="close", description="Close the current support ticket")
 async def close_cmd(interaction: discord.Interaction):
@@ -3103,6 +3132,17 @@ def _bot_health_text():
 async def tools_health(interaction: discord.Interaction):
     if not await _yt_owner_gate(interaction): return
     await interaction.response.send_message(_bot_health_text(), ephemeral=True)
+
+@tools_group.command(name="ticketpanel", description="Post the ticket panel (HELP / BUG REPORT / IDEA buttons) in this channel (mods only)")
+async def tools_ticketpanel(interaction: discord.Interaction):
+    if interaction.guild is None or not isinstance(interaction.channel, discord.TextChannel):
+        await interaction.response.send_message("❌ Please use this inside a server text channel.", ephemeral=True); return
+    if not _is_mod(interaction):
+        await _deny(interaction); return
+    embed=discord.Embed(title="SOME ISSUES?", color=0xff6b9d)
+    embed.description="**NEED SOME HELP OR WANT TO CONTACT US?**\n\n🎟️ Tap a button below to open your case"
+    await interaction.channel.send(embed=embed, view=TicketPanelView())
+    await interaction.response.send_message("✅ Ticket panel posted in this channel.", ephemeral=True)
 
 def _yt_natural_action(content: str, bot_user_id=None):
     text=(content or "").strip()
