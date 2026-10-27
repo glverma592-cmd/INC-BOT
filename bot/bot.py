@@ -419,22 +419,132 @@ async def _deny(interaction: discord.Interaction, msg="❌ This command is only 
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message(f"🏓 Pong! `{round(bot.latency*1000)}ms`")
 
-@bot.tree.command(name="help", description="Show all bot commands")
+def _help_command_total() -> int:
+    total=0
+    for cmd in bot.tree.get_commands():
+        subs=getattr(cmd, "commands", None)
+        total += len(subs) if subs else 1
+    return total
+
+_HELP_CATEGORIES={
+    "utility": ("⚡", "Utility", "⚡ Utility Commands",
+        "`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo` `/roles` `/banner` `/channelinfo` `/emojiinfo`\n\n"
+        "**/tools**: timestamp, snowflake, uuid, random, b64encode, b64decode, sha256, binary, hex, unit, coinamount, health, ticketpanel, youtube\n"
+        "**/text**: reverse, upper, lower, title, count, repeat, spoiler, mock, vowels, slug\n\n"
+        "`/calc` `/qr` `/color` `/password` `/invite` `/support`"),
+    "fun": ("😄", "Fun", "😄 Fun Commands",
+        "**/actions** (with GIFs): hug, pat, slap, wave, highfive, dance, cry, laugh, angry, sleep, eat, thumbsup\n\n"
+        "**/games**: trivia, trivia_answer, riddle, riddle_answer, scramble, scramble_guess, mathquiz, math_answer, numberguess, guess, slots, **royale**\n\n"
+        "`/coinflip` `/dice` `/choose` `/eightball` `/rps` `/joke` `/fact` `/quote` `/afk` `/snipe` `/timer`"),
+    "mod": ("🛡️", "Mod & Protect", "🛡️ Mod & Protect Commands",
+        "`/kick` `/ban` `/unban` `/timeout` `/untimeout` `/warn` `/warnings` `/clearwarn` `/clear` `/slowmode` `/lock` `/unlock`\n\n"
+        "`/role_add` `/role_remove` `/nickname` `/autorole_bot_add` `/autorole_bot_remove` `/autorole_bot_status` `/setmodlog`\n\n"
+        "**Protection:** `/antilink` `/antispam` `/badwords` `/antiraid` `/antinuke` `/nuke` `/lockdown` `/quarantine` `/unquarantine` `/purge` `/allnuke` (owner only)"),
+    "economy": ("💰", "Economy", "💰 Economy Commands",
+        "`/balance` `/daily` `/pay` `/gamble` `/rank` `/leaderboard`\n\n"
+        "**/games slots** — bet Nezu Coins on the slot machine\n"
+        "`/giveaway` — admin/mod giveaway\n"
+        "`/remind` `/reminders` `/remind_cancel` — reminders"),
+    "anime": ("🌸", "Anime", "🌸 Anime, AI & Voice Commands",
+        "`/ask` — ask Nezu AI anything\n"
+        "`/chatbot` — tag-only AI chat: On / Off / Status\n"
+        "`/image` — generate an image\n"
+        "`/summarize` — summarize text\n\n"
+        "**Anime actions:** `/actions hug`, `/actions pat`, `/actions dance`, `/actions wave` and more — all with GIFs\n\n"
+        "**Music & Voice:** `/play` `/p` `/join` `/skip` `/stop` `/pause` `/resume` `/queue` `/nowplaying` `/autoplay` `/vcchat`"),
+    "mystic": ("🎭", "Mystic", "🎭 Mystic & Luck Commands",
+        "`/eightball` — ask the magic 8-ball\n"
+        "`/choose` — Nezu chooses for you\n"
+        "`/coinflip` `/dice` `/rps` — luck games\n"
+        "`/fact` `/quote` `/joke` — something new every time\n"
+        "`/color` `/password` — random color and password\n"
+        "**/games**: numberguess, guess, mathquiz, scramble, trivia, **royale**"),
+    "welcome": ("📝", "Welcome", "📝 Welcome, Tickets & Server Commands",
+        "🌸 **Auto-Welcome is ON by default** — new members are welcomed automatically, no setup needed. Control it with `/server welcome`.\n\n"
+        "**Tickets:** `/ticket` `/close` `/tools ticketpanel` — post the HELP / BUG REPORT / IDEA panel\n\n"
+        "`/say` `/announce` `/dm` `/poll` `/report` `/rules` `/suggest`\n\n"
+        "**/server**: stats, icon, serverbanner, emojis, rolescount, channels, boosts, owner, created, afk, verification, welcome, features"),
+}
+
+def _help_home_embed() -> discord.Embed:
+    total=_help_command_total()
+    embed=discord.Embed(title="📚 Command Panel", color=0xff6b9d)
+    embed.description=(
+        "```\n"
+        "╔══════════════════════════════════╗\n"
+        "║        NEZU COMMAND PANEL        ║\n"
+        f"║      {total} COMMANDS • 7 CATEGORIES      ║\n"
+        "╚══════════════════════════════════╝\n"
+        "```\n"
+        "🔘 **Pick a category below to browse every command!**\n"
+        "💡 Tip: type `/` in chat and search instantly."
+    )
+    if bot.user is not None:
+        try: embed.set_thumbnail(url=bot.user.display_avatar.url)
+        except Exception: pass
+    embed.set_footer(text=f"NEZU • {total} commands and counting")
+    return embed
+
+def _help_category_embed(key: str) -> discord.Embed:
+    _emoji, _label, title, body=_HELP_CATEGORIES[key]
+    total=_help_command_total()
+    embed=discord.Embed(title=title, color=0xff6b9d, description=body)
+    if bot.user is not None:
+        try: embed.set_thumbnail(url=bot.user.display_avatar.url)
+        except Exception: pass
+    embed.set_footer(text=f"NEZU • {total} commands and counting • Press Home for all categories")
+    return embed
+
+class HelpPanelView(discord.ui.View):
+    """Screenshot jaisa /help Command Panel — 7 category buttons, sirf chalane wala hi ghumayega."""
+    def __init__(self, user_id: int):
+        super().__init__(timeout=600)
+        self.user_id=int(user_id)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your help panel. Open your own with `/help`.", ephemeral=True)
+            return False
+        return True
+
+    async def _show(self, interaction: discord.Interaction, key: str):
+        await interaction.response.edit_message(embed=_help_category_embed(key), view=self)
+
+    @discord.ui.button(label="Utility", style=discord.ButtonStyle.primary, emoji="⚡", row=0)
+    async def btn_utility(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show(interaction, "utility")
+
+    @discord.ui.button(label="Fun", style=discord.ButtonStyle.primary, emoji="😄", row=0)
+    async def btn_fun(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show(interaction, "fun")
+
+    @discord.ui.button(label="Mod & Protect", style=discord.ButtonStyle.primary, emoji="🛡️", row=0)
+    async def btn_mod(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show(interaction, "mod")
+
+    @discord.ui.button(label="Economy", style=discord.ButtonStyle.primary, emoji="💰", row=0)
+    async def btn_economy(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show(interaction, "economy")
+
+    @discord.ui.button(label="Anime", style=discord.ButtonStyle.success, emoji="🌸", row=1)
+    async def btn_anime(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show(interaction, "anime")
+
+    @discord.ui.button(label="Mystic", style=discord.ButtonStyle.success, emoji="🎭", row=1)
+    async def btn_mystic(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show(interaction, "mystic")
+
+    @discord.ui.button(label="Welcome", style=discord.ButtonStyle.success, emoji="📝", row=1)
+    async def btn_welcome(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show(interaction, "welcome")
+
+    @discord.ui.button(label="Home", style=discord.ButtonStyle.secondary, emoji="🏠", row=2)
+    async def btn_home(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_help_home_embed(), view=self)
+
+@bot.tree.command(name="help", description="Show the Nezu command panel — browse commands by category")
 async def help_cmd(interaction: discord.Interaction):
-    embed=discord.Embed(title="Nezu — All Commands", color=0x9b59b6)
-    embed.add_field(name="Admin / Moderation", value="`/kick` `/ban` `/unban` `/timeout` `/untimeout` `/warn` `/warnings` `/clearwarn` `/clear` `/slowmode` `/lock` `/unlock` `/role_add` `/role_remove` `/nickname` `/autorole_bot_add` `/autorole_bot_remove` `/autorole_bot_status`", inline=False)
-    embed.add_field(name="Server & Users", value="`/ping` `/botinfo` `/uptime` `/serverinfo` `/userinfo` `/avatar` `/membercount` `/roleinfo` `/roles` `/banner` `/channelinfo` `/emojiinfo`", inline=False)
-    embed.add_field(name="Announcements", value="`/say` `/announce` `/dm` `/report` `/poll` `/invite` `/support` `/rules` `/suggest`", inline=False)
-    embed.add_field(name="AI & Images", value="`/ask` — ask the AI • `/chatbot` — tag-only AI chat (On/Off/Status) • `/summarize` • `/image` — generate an image", inline=False)
-    embed.add_field(name="Levels, Tickets & Economy", value="`/rank` `/leaderboard` `/ticket` `/close` `/tools ticketpanel` `/remind` `/reminders` `/remind_cancel` `/balance` `/daily` `/pay` `/gamble` `/afk` `/snipe` `/timer`", inline=False)
-    embed.add_field(name="AutoMod & Security", value="`/antilink` `/antispam` `/badwords` `/antiraid` `/setmodlog` `/antinuke` `/nuke` `/lockdown` `/quarantine` `/unquarantine` `/purge` `/allnuke` (owner only)", inline=False)
-    embed.add_field(name="Owner Tools", value="`/noprefix` • `/tools health` • `/tools youtube` — YouTube: Status / On / Off / Report / Videos / Comments / Upload", inline=False)
-    embed.add_field(name="Music & Voice", value="`/play` `/p` `/join` `/skip` `/stop` `/pause` `/resume` `/queue` `/nowplaying` `/autoplay` • `/vcchat` — talk to Nezu in VC", inline=False)
-    embed.add_field(name="Utility Groups", value="**/tools**: timestamp, snowflake, uuid, random, b64encode, b64decode, sha256, binary, hex, unit, coinamount, health, youtube\n**/text**: reverse, upper, lower, title, count, repeat, spoiler, mock, vowels, slug", inline=False)
-    embed.add_field(name="Fun & Games", value="**/actions**: hug, pat, slap, wave, highfive, dance, cry, laugh, angry, sleep, eat, thumbsup (with GIFs)\n**/games**: trivia, trivia_answer, riddle, riddle_answer, scramble, scramble_guess, mathquiz, math_answer, numberguess, guess, slots, royale\nAlso: `/coinflip` `/dice` `/choose` `/eightball` `/rps` `/joke` `/fact` `/quote` `/calc` `/password` `/qr` `/color`", inline=False)
-    embed.add_field(name="Server Group", value="**/server**: stats, icon, serverbanner, emojis, rolescount, channels, boosts, owner, created, afk, verification, welcome, features", inline=False)
-    embed.set_footer(text="New members are welcomed automatically — no setup needed.")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=_help_home_embed(), view=HelpPanelView(interaction.user.id))
 
 @bot.tree.command(name="botinfo", description="Show bot information")
 async def botinfo(interaction: discord.Interaction):
