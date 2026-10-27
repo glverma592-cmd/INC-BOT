@@ -42,7 +42,7 @@ class TestBotCode(unittest.TestCase):
         self.assertIsNone(v.timeout, "persistent view ka timeout None hona chahiye")
         ids = [c.custom_id for c in v.children]
         self.assertEqual(ids, ["autodm:verify"])
-        self.assertEqual(v.children[0].label, "Verify karo")
+        self.assertEqual(v.children[0].label, "Verify")
 
     def test_3_dm_text_formatting(self):
         txt = botmod.DM_TEXT.format(user="<@123>", guild="MyServer", count=42)
@@ -122,7 +122,7 @@ class TestBotCode(unittest.TestCase):
         member.send.assert_awaited_once()
         self.assertEqual(len(calls), 1, "DM block par fallback zaroor call ho")
         self.assertEqual(calls[0][0], 999)
-        self.assertIn("DM nahi", calls[0][1])
+        self.assertIn("DM could not", calls[0][1])
         print("    fallback reason:", calls[0][1])
 
     def test_7_dm_success_path(self):
