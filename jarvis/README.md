@@ -102,6 +102,40 @@ se na khule to MacroDroid me Launch App + upar wali HTTP action dono rakho.
 - Naya version GitHub se: `bash update.sh` (purana apne-aap stash backup me).
 - Kuch bigde to purana wapas: `git stash pop`
 
+## 🧠 Jarvis ka apna dimag (v2)
+
+`my_brain/` folder hi Jarvis ka apna dimag hai — Acode se kabhi bhi edit Karo,
+restart ki zaroorat nahi, agli baat se lagu ho jata hai:
+
+- `my_brain/persona.txt` — Jarvis ka swabhaav, bolne ka tareeka
+- `my_brain/knowledge.md` — tumhari apni jaankari/notes
+- `my_brain/qa.json` — sikhe hue sawaal-jawab
+- `brain_config.json` — dimag on/off, jawab ka style
+
+Jarvis ko kuch bhi sikhao (chat me hi):
+
+```text
+seekho: mera match kab hai => Kal shaam 5 baje
+```
+
+Phir pucho `mera match kab hai` — bina internet wahi jawab milega.
+Mujhe (Ara ko) bologe "Jarvis ko train Karo" to mai yahi files update
+karke, test karke dunga.
+
+## ⚡ 24/7 mode
+
+```bash
+bash start-24x7.sh
+```
+
+- `start-24x7.sh` — wake-lock + watchdog chalu (band ho to khud start)
+- `stop-24x7.sh` — 24/7 band
+- `bash install-boot.sh` — phone on hote hi auto-start (Termux:Boot app chahiye)
+
+Zaroori: Settings me Termux + MacroDroid ki **battery optimization OFF** Karo,
+aur phone charger/Wi-Fi par rakho. Android kabhi-kabhi phir bhi rok deta hai —
+watchdog use wapas chalu kar deta hai.
+
 ## Safety
 
 - Password/OTP/payment/delete/message-bhejna — Jarvis khud nahi karega,

@@ -106,6 +106,18 @@ def execute(plan):
             _reminders.append({"at": time.time() + secs, "text": args.get("text", "Reminder")})
             save_json(REMINDERS_FILE, _reminders)
             return reply or f"⏰ {secs} second baad yaad dila dunga."
+        if act == "learn_qa":
+            cfg = brain._brain_config()
+            qa_path = ROOT / cfg.get("qa_file", "my_brain/qa.json")
+            data = load_json(qa_path, [])
+            q = str(args.get("question", "")).strip()
+            a = str(args.get("answer", "")).strip()
+            if q and a:
+                data.append({"questions": [q], "answer": a})
+                qa_path.parent.mkdir(parents=True, exist_ok=True)
+                save_json(qa_path, data)
+                return f"🧠 Seekh liya: “{q}” ka jawab yaad kar liya."
+            return "⚠️ Seekhane ke liye aise likho: seekho: sawaal => jawab"
         if act == "remember":
             mem = load_json(MEMORY_FILE, {"facts": []})
             fact = str(args.get("fact", "")).strip()
@@ -176,6 +188,13 @@ def self_check():
     lines.append("🤖 Gemini key: " + ("✅ set" if os.environ.get("GEMINI_API_KEY") else "⚠️ nahi — sirf rule commands chalenge"))
     lines.append(f"🧠 Memory facts: {len(load_json(MEMORY_FILE, {'facts': []}).get('facts', []))}")
     lines.append(f"⏰ Pending reminders: {len(_reminders)}")
+    try:
+        own = brain.load_own_brain()
+        lines.append(f"🧠 Apna dimag: persona {'✅' if own.get('persona') else '❌'}, "
+                     f"knowledge {len(own.get('knowledge', ''))} akshar, "
+                     f"sikhe jawab {len(own.get('qa', []))}")
+    except Exception:
+        lines.append("🧠 Apna dimag: ❌ load nahi hua")
     report = "\n".join(lines)
     (ROOT / "self-check.txt").write_text(report, encoding="utf-8")
     return report

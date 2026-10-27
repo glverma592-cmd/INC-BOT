@@ -1,0 +1,9 @@
+{
+  "own_brain_enabled": true,
+  "persona_file": "my_brain/persona.txt",
+  "knowledge_file": "my_brain/knowledge.md",
+  "qa_file": "my_brain/qa.json",
+  "knowledge_char_limit": 6000,
+  "answer_style": "short",
+  "allow_learning_commands": true
+}
