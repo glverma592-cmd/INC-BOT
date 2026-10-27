@@ -1443,6 +1443,255 @@ def _save_chatbot_channels():
 _memory: dict[tuple[int, int], list] = {}
 _chat_memory: dict[tuple[int, int], list] = {}
 
+# ---------- No Prefix: @Nezu tag karke command chalana ----------
+_TAG_HELP_COMMANDS={"help","ping","ask","image","video","play","p","join","leave","skip","stop","pause","resume","queue","nowplaying","np","balance","daily","rank","joke","fact","quote","coinflip","dice","choose","eightball","say","clear","purge","kick","ban","timeout","lock","unlock"}
+def _msg_member(message):
+    if message.guild is None: return None
+    if isinstance(message.author, discord.Member): return message.author
+    return message.guild.get_member(message.author.id)
+def _msg_is_admin(message) -> bool:
+    m=_msg_member(message)
+    return bool(m and m.guild_permissions.administrator)
+def _msg_is_mod(message) -> bool:
+    m=_msg_member(message)
+    p=m.guild_permissions if m else None
+    return bool(p and (p.administrator or p.manage_guild or p.manage_messages or p.kick_members or p.ban_members))
+def _strip_bot_mentions(message) -> str:
+    text=message.content or ""
+    if bot.user:
+        text=text.replace(f"<@{bot.user.id}>", " ").replace(f"<@!{bot.user.id}>", " ")
+    return " ".join(text.strip().split())
+def _first_target_member(message):
+    if not message.guild: return None
+    for m in message.mentions:
+        if bot.user and m.id == bot.user.id: continue
+        if m.id == message.author.id: continue
+        member=message.guild.get_member(m.id)
+        if member: return member
+    return None
+async def _tag_play(message, query: str) -> bool:
+    if message.guild is None: return True
+    if not query:
+        await message.reply("Usage: `@Nezu play <song name>`", mention_author=False); return True
+    voice=getattr(message.author, "voice", None)
+    if not voice or not voice.channel:
+        await message.reply("❌ First join a voice channel, then tag me with the song.", mention_author=False); return True
+    if _ensure_ytdlp() is None:
+        await message.reply("⚠️ Music is not ready right now. Please try again later.", mention_author=False); return True
+    status=await message.reply(f"🔎 Searching for **{query}**...", mention_author=False)
+    try:
+        vc=await _join_voice(voice.channel)
+    except Exception:
+        log.error("tag play join fail\n%s", traceback.format_exc())
+        await status.edit(content="⚠️ I could not join your voice channel."); return True
+    try:
+        track=await asyncio.get_event_loop().run_in_executor(None, _yt_extract, query)
+    except Exception:
+        log.error("tag play search fail\n%s", traceback.format_exc())
+        await status.edit(content="⚠️ I could not find that song."); return True
+    track["requester"]=message.author.display_name
+    st=_music_of(message.guild.id); st["manual_stop"]=False; st["text_channel"]=message.channel
+    st["queue"].append(track)
+    if vc.is_playing() or vc.is_paused():
+        await status.edit(content=f"➕ Added to the queue: **{track['title']}**")
+    else:
+        await status.edit(content=f"🎵 Playing now: **{track['title']}**")
+        await _play_next(message.guild)
+    return True
+
+async def _handle_tag_command(message) -> bool:
+    """No Prefix power (ya bot owner) ho to @Nezu likhi hui command seedha chalao.
+    Command pehchan me na aaye to False — fir normal chat/AI jawab chalega."""
+    if message.guild is None or bot.user is None or bot.user not in message.mentions:
+        return False
+    allowed=_noprefix_active(message.author.id)
+    if not allowed:
+        try: allowed=(message.author.id == await _get_bot_owner_id())
+        except Exception: allowed=False
+    if not allowed:
+        return False
+    raw=_strip_bot_mentions(message).strip()
+    if raw.startswith("/"): raw=raw[1:].lstrip()
+    if not raw: return False
+    parts=raw.split(maxsplit=1)
+    cmd=parts[0].lower().strip(".,!?")
+    rest=parts[1].strip() if len(parts) > 1 else ""
+    if cmd not in _TAG_HELP_COMMANDS:
+        return False
+    guild=message.guild
+    try:
+        if cmd == "help":
+            await message.reply(embed=_help_home_embed(), view=HelpPanelView(message.author.id), mention_author=False); return True
+        if cmd == "ping":
+            await message.reply(f"🏓 Pong! `{round(bot.latency*1000)}ms`", mention_author=False); return True
+        if cmd == "ask":
+            if not rest: await message.reply("Usage: `@Nezu ask <your question>`", mention_author=False)
+            else:
+                now=time.time()
+                if now - _ask_cooldown.get(message.author.id, 0) < 5: return True
+                _ask_cooldown[message.author.id]=now
+                ph=await message.reply("🌸 **Nezu is thinking...** ✨", mention_author=False)
+                ans=await _refresh_ke_sath(ph, "🌸 **Nezu is thinking...** ✨", _ask_ai_fast(rest, None, mode="qa"))
+                await ph.edit(content=ans)
+            return True
+        if cmd == "image":
+            if not rest: await message.reply("Usage: `@Nezu image <describe the image>`", mention_author=False); return True
+            now=time.time()
+            if now - _image_cooldown.get(message.author.id, 0) < 15:
+                await message.reply("⏳ Wait 15 seconds, then try the image again.", mention_author=False); return True
+            _image_cooldown[message.author.id]=now
+            ph=await message.reply("🎨 **Nezu is creating your image...** 🌸", mention_author=False)
+            gen=await _english_media_prompt(rest)
+            try:
+                data=await _refresh_ke_sath(ph, "🎨 **Nezu is creating your image...** 🌸", _make_image(gen+", high quality, detailed, vibrant"))
+                await ph.edit(content=f"🎨 {message.author.mention}: {rest}", attachments=[discord.File(io.BytesIO(data), filename="ai-image.jpg")])
+            except Exception:
+                log.error("tag image fail\n%s", traceback.format_exc())
+                await ph.edit(content="⚠️ I could not create the image — please try again in a little while.")
+            return True
+        if cmd == "video":
+            if not rest: await message.reply("Usage: `@Nezu video <describe the scene>`", mention_author=False); return True
+            now=time.time()
+            if now - _video_cooldown.get(message.author.id, 0) < 60:
+                await message.reply("⏳ One video per minute — please wait a little.", mention_author=False); return True
+            _video_cooldown[message.author.id]=now
+            ph=await message.reply("🎬 **Nezu is creating your video...** 🌸", mention_author=False)
+            gen=await _english_media_prompt(rest)
+            try:
+                data=await _refresh_ke_sath(ph, "🎬 **Nezu is creating your video...** 🌸", _make_video(gen, 5))
+                await ph.edit(content=f"🎬 {message.author.mention}: {rest}", attachments=[discord.File(io.BytesIO(data), filename="ai-video.mp4")])
+            except Exception as e:
+                log.error("tag video fail\n%s", traceback.format_exc())
+                reason="ffmpeg is missing in Termux (`pkg install -y ffmpeg`)" if "ffmpeg not found" in str(e) else "please try again in a little while"
+                await ph.edit(content=f"⚠️ I could not create the video — {reason}.")
+            return True
+        if cmd in ("play", "p"):
+            return await _tag_play(message, rest)
+        if cmd == "join":
+            voice=getattr(message.author, "voice", None)
+            if not voice or not voice.channel:
+                await message.reply("❌ First join a voice channel yourself.", mention_author=False); return True
+            await _join_voice(voice.channel)
+            await message.reply(f"🎵 Joined **{voice.channel.name}**.", mention_author=False); return True
+        vc=guild.voice_client
+        if cmd == "leave":
+            try: _stop_listening(guild)
+            except Exception: pass
+            if vc is not None: await vc.disconnect(force=True)
+            await message.reply("👋 Left the voice channel.", mention_author=False); return True
+        if cmd in ("skip", "stop", "pause", "resume", "queue", "nowplaying", "np"):
+            if vc is None:
+                await message.reply("ℹ️ I am not in a voice channel right now.", mention_author=False); return True
+            st=_music_of(guild.id)
+            if cmd == "skip":
+                if vc.is_playing() or vc.is_paused(): vc.stop(); await message.reply("⏭️ Skipped.", mention_author=False)
+                else: await message.reply("ℹ️ Nothing is playing.", mention_author=False)
+            elif cmd == "stop":
+                st["manual_stop"]=True; st["queue"].clear()
+                if vc.is_playing() or vc.is_paused(): vc.stop()
+                await message.reply("⏹️ Music stopped and the queue was cleared.", mention_author=False)
+            elif cmd == "pause":
+                if vc.is_playing(): vc.pause(); await message.reply("⏸️ Paused.", mention_author=False)
+                else: await message.reply("ℹ️ Nothing is playing.", mention_author=False)
+            elif cmd == "resume":
+                if vc.is_paused(): vc.resume(); await message.reply("▶️ Resumed.", mention_author=False)
+                else: await message.reply("ℹ️ Nothing is paused.", mention_author=False)
+            elif cmd in ("nowplaying", "np"):
+                cur=st.get("current")
+                await message.reply(f"🎵 **Now Playing:** {cur['title']}" if cur else "ℹ️ Nothing is playing right now.", mention_author=False)
+            else:
+                cur=st.get("current"); q=st.get("queue", [])
+                lines=[]
+                if cur: lines.append(f"🎵 Now: **{cur['title']}**")
+                lines += [f"{i}. {t['title']}" for i, t in enumerate(q[:10], 1)]
+                await message.reply("\n".join(lines) if lines else "ℹ️ The queue is empty.", mention_author=False)
+            return True
+        if cmd == "balance":
+            rec=_eco_rec(guild.id, message.author.id)
+            await message.reply(f"🪙 {message.author.mention}, your balance is **{int(rec.get('coins', 0)):,} coins**.", mention_author=False); return True
+        if cmd == "daily":
+            rec=_eco_rec(guild.id, message.author.id); now_ts=datetime.datetime.now(datetime.timezone.utc).timestamp(); last=float(rec.get("last_daily", 0)); remaining=86400-(now_ts-last)
+            if last and remaining > 0:
+                await message.reply(f"⏳ Daily already claimed. Come back in **{int(remaining//3600)}h {int((remaining%3600)//60)}m**.", mention_author=False)
+            else:
+                reward=random.randint(100, 250); rec["coins"]=int(rec.get("coins", 0))+reward; rec["last_daily"]=now_ts; _save_economy()
+                await message.reply(f"🎁 {message.author.mention} claimed **🪙 {reward} coins!** New balance: **🪙 {int(rec['coins']):,}**", mention_author=False)
+            return True
+        if cmd == "rank":
+            rec=_levels.get(str(guild.id), {}).get(str(message.author.id), {"xp": 0, "messages": 0})
+            level, progress, needed=_level_progress(int(rec.get("xp", 0)))
+            await message.reply(f"⭐ {message.author.mention} — Level **{level}** • XP **{int(rec.get('xp', 0))}** ({progress}/{needed} to next level)", mention_author=False); return True
+        if cmd == "joke": await message.reply(f"😂 {random.choice(_JOKES)}", mention_author=False); return True
+        if cmd == "fact": await message.reply(f"🧠 {random.choice(_FACTS)}", mention_author=False); return True
+        if cmd == "quote": await message.reply(f"💡 {random.choice(_QUOTES)}", mention_author=False); return True
+        if cmd == "coinflip": await message.reply(f"🪙 **{random.choice(['Heads', 'Tails'])}**", mention_author=False); return True
+        if cmd == "dice":
+            try: sides=max(2, min(1000, int(re.findall(r"\d+", rest)[0]))) if re.findall(r"\d+", rest) else 6
+            except Exception: sides=6
+            await message.reply(f"🎲 You rolled **{random.randint(1, sides)}** (d{sides})", mention_author=False); return True
+        if cmd == "choose":
+            opts=[x.strip() for x in re.split(r",|\bor\b", rest, flags=re.IGNORECASE) if x.strip()]
+            await message.reply(f"🤔 I choose: **{random.choice(opts)}**" if opts else "Usage: `@Nezu choose tea or coffee`", mention_author=False); return True
+        if cmd == "eightball":
+            await message.reply(f"🎱 {random.choice(['Yes, definitely.', 'Most likely yes.', 'Ask again later.', 'Not looking good.', 'Absolutely not.', 'Signs point to yes.'])}", mention_author=False); return True
+        if cmd == "say":
+            if not _msg_is_mod(message):
+                await message.reply("❌ Only mods can use the say command.", mention_author=False); return True
+            if not rest: await message.reply("Usage: `@Nezu say <message>`", mention_author=False); return True
+            await message.channel.send(rest)
+            try: await message.delete()
+            except Exception: pass
+            return True
+        if cmd in ("clear", "purge"):
+            if not _msg_is_mod(message):
+                await message.reply("❌ Only mods can clear messages.", mention_author=False); return True
+            try: amount=max(1, min(100, int(re.findall(r"\d+", rest)[0]))) if re.findall(r"\d+", rest) else 10
+            except Exception: amount=10
+            deleted=await message.channel.purge(limit=amount+1)
+            await message.channel.send(f"🧹 Cleared **{max(0, len(deleted)-1)}** messages.", delete_after=5)
+            return True
+        if cmd in ("kick", "ban", "timeout"):
+            need={"kick": "kick_members", "ban": "ban_members", "timeout": "moderate_members"}[cmd]
+            member=_msg_member(message)
+            if not (member and (_msg_is_admin(message) or getattr(member.guild_permissions, need, False))):
+                await message.reply(f"❌ You need the **{need.replace('_', ' ')}** permission for that.", mention_author=False); return True
+            target=_first_target_member(message)
+            if target is None:
+                await message.reply(f"Usage: `@Nezu {cmd} @member [reason]`", mention_author=False); return True
+            if target.id == message.author.id or (bot.user and target.id == bot.user.id):
+                await message.reply("❌ That target is not allowed.", mention_author=False); return True
+            me=guild.me
+            if me is None or target.top_role >= me.top_role or (target.top_role >= member.top_role and guild.owner_id != message.author.id):
+                await message.reply("❌ I cannot act on that member — role hierarchy is in the way.", mention_author=False); return True
+            reason_text=" ".join(re.sub(r"<@!?\d+>", " ", raw).split()[1:]).strip()
+            reason=reason_text or f"{cmd.title()} by {message.author} via tag command"
+            try:
+                if cmd == "kick": await target.kick(reason=reason)
+                elif cmd == "ban": await target.ban(reason=reason, delete_message_days=0)
+                else:
+                    nums=re.findall(r"\d+", reason_text); minutes=max(1, min(40320, int(nums[0]))) if nums else 10
+                    await target.timeout(datetime.timedelta(minutes=minutes), reason=reason)
+                    await message.reply(f"⏳ {target.mention} timed out for **{minutes} minutes**. Reason: {reason}", mention_author=False); return True
+            except discord.Forbidden:
+                await message.reply("❌ I do not have permission to do that.", mention_author=False); return True
+            await message.reply(f"✅ {target.mention} was {'kicked' if cmd=='kick' else 'banned'}. Reason: {reason}", mention_author=False); return True
+        if cmd in ("lock", "unlock"):
+            if not _msg_is_admin(message):
+                await message.reply("❌ Only admins can lock or unlock a channel.", mention_author=False); return True
+            everyone=guild.default_role
+            try:
+                await message.channel.set_permissions(everyone, send_messages=False if cmd == "lock" else None, reason=f"Tag {cmd} by {message.author}")
+            except discord.Forbidden:
+                await message.reply("❌ I need Manage Channels permission for that.", mention_author=False); return True
+            await message.reply("🔒 Channel locked." if cmd == "lock" else "🔓 Channel unlocked.", mention_author=False); return True
+    except Exception:
+        log.error("tag command fail\n%s", traceback.format_exc())
+        try: await message.reply("⚠️ That command could not run — please try again.", mention_author=False)
+        except Exception: pass
+        return True
+    return False
+
+
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot: return
@@ -1455,6 +1704,8 @@ async def on_message(message: discord.Message):
     if await _check_badwords(message):
         return
     await _award_xp(message)
+    if await _handle_tag_command(message):
+        return
     is_mention = bool(bot.user and bot.user in message.mentions)
     is_tag_chatbot = _tag_chatbot_master_on and message.channel.id in _tag_chatbot_channels
     is_noprefix = _noprefix_active(message.author.id)
@@ -1544,7 +1795,7 @@ async def noprefix_cmd(interaction: discord.Interaction, action: app_commands.Ch
             await interaction.response.send_message("❌ No Prefix power cannot be given to a bot account.", ephemeral=True); return
         expiry=_add_months(datetime.datetime.now(datetime.timezone.utc), 2)
         _noprefix[member.id]=expiry.timestamp(); _save_noprefix()
-        await interaction.response.send_message(f"👑 No Prefix power given to {member.mention}.\n⏳ It will expire automatically on **{expiry.strftime('%d %b %Y')}**.\nNow they can simply type a message/question — no `/ask`, mention, or command prefix is needed.", ephemeral=True)
+        await interaction.response.send_message(f"👑 No Prefix power given to {member.mention}.\n⏳ It will expire automatically on **{expiry.strftime('%d %b %Y')}**.\nThey can simply type a message/question — no `/ask`, mention, or command prefix is needed. They can also tag Nezu with a command, e.g. `@Nezu play Arijit Singh`, `@Nezu image a warrior`, or `@Nezu clear 20` (moderation commands still need real mod permission).", ephemeral=True)
     elif op == "remove":
         if _noprefix.pop(member.id, None) is not None:
             _save_noprefix()
