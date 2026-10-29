@@ -256,6 +256,63 @@ def _pick_welcome_channel(guild):
         pass
     return None
 
+_WELCOME_COLORS=(0xff6b9d, 0x9b5cff, 0xff9f43, 0x00c2ff, 0x2ed573, 0xff5e7a)
+_WELCOME_LINES=(
+    "A brand-new star just landed in our sky. Go say hi! ✨",
+    "The party just got better — our newest member is here! 🎉",
+    "Everyone, roll out the red carpet for our newest member! 🌟",
+    "A new adventure begins today — welcome to the family! 🚀",
+    "Fresh energy just walked in. Make them feel at home! 💫",
+)
+
+def _build_welcome_embed(member, guild):
+    """Tagada auto-welcome card — bade avatar/banner, member #, account age."""
+    import random as _random
+    rules_ch=next((c for c in guild.text_channels if "rule" in c.name.lower()), None)
+    intro_ch=next((c for c in guild.text_channels if any(w in c.name.lower() for w in ("intro", "introduce"))), None)
+    count=guild.member_count or 0
+    created=""
+    try:
+        created=f"<t:{int(member.created_at.timestamp())}:R>"
+    except Exception:
+        created=""
+    steps=[]
+    if rules_ch is not None:
+        steps.append(f"📜 **Step 1:** Read the rules in {rules_ch.mention}")
+    if intro_ch is not None:
+        steps.append(f"👋 **Step 2:** Introduce yourself in {intro_ch.mention}")
+    else:
+        steps.append("👋 **Step 2:** Say hi in chat — everyone is friendly here!")
+    steps.append("⌨️ **Step 3:** Type `/help` to explore everything I can do")
+    embed=discord.Embed(
+        title=f"🌸 Welcome to {guild.name}, {member.display_name}!",
+        description=(f"Hey {member.mention}! 💜\n{_random.choice(_WELCOME_LINES)}\n\n"
+                     + "\n".join(steps)
+                     + "\n\n🎮 Games, 🎵 music, 🤖 AI chat and a lovely community are waiting for you. Enjoy your stay!"),
+        color=_random.choice(_WELCOME_COLORS),
+        timestamp=discord.utils.utcnow())
+    embed.add_field(name="👥 Member", value=f"**#{count}**", inline=True)
+    if created:
+        embed.add_field(name="🗓️ Account Created", value=created, inline=True)
+    embed.add_field(name="🏠 Server", value=f"**{guild.name}**", inline=True)
+    try:
+        avatar_url=member.display_avatar.url
+    except Exception:
+        avatar_url=None
+    try:
+        if getattr(guild, "banner", None):
+            embed.set_image(url=guild.banner.url)
+            if avatar_url: embed.set_thumbnail(url=avatar_url)
+        elif avatar_url:
+            embed.set_image(url=avatar_url)
+    except Exception:
+        pass
+    if guild.icon:
+        try: embed.set_author(name=guild.name, icon_url=guild.icon.url)
+        except Exception: pass
+    embed.set_footer(text=f"Nezu • Member #{count} • Auto-Welcome")
+    return embed
+
 async def _send_auto_welcome(member) -> bool:
     """Naya member -> server channel me apne aap welcome (zero setup)."""
     try:
@@ -264,26 +321,38 @@ async def _send_auto_welcome(member) -> bool:
         if not _welcome_enabled(guild.id): return False
         ch=_pick_welcome_channel(guild)
         if ch is None: return False
-        rules_ch=next((c for c in guild.text_channels if "rule" in c.name.lower()), None)
-        embed=discord.Embed(
-            title=f"🌸 Welcome to {guild.name}!",
-            description=(f"Hey {member.mention}, a very warm welcome to the **{guild.name}** family! 💜\n\n"
-                         f"👥 You are member **#{guild.member_count}** of this server.\n"
-                         + (f"📜 Please take a moment to read {rules_ch.mention} first.\n" if rules_ch is not None else "")
-                         + "💬 Need any help? Just ask in chat — and type `/help` to see everything I can do!"),
-            color=0xff6b9d)
-        try: embed.set_thumbnail(url=member.display_avatar.url)
-        except Exception: pass
-        if guild.icon:
-            try: embed.set_author(name=guild.name, icon_url=guild.icon.url)
-            except Exception: pass
-        embed.set_footer(text="Nezu • Auto-Welcome (runs automatically, no setup needed)")
-        await ch.send(content=f"🎉 Welcome {member.mention}!", embed=embed)
+        embed=_build_welcome_embed(member, guild)
+        await ch.send(content=f"🎊 Everyone welcome {member.mention} to **{guild.name}**! 🎊", embed=embed)
         log.info("auto-welcome -> %s in %s (#%s)", member, guild.name, ch.name)
         return True
     except Exception:
         log.warning("auto-welcome fail\n%s", traceback.format_exc())
         return False
+
+def _build_welcome_dm_embed(member):
+    """Naye member ke DM ke liye sundar welcome card."""
+    guild=member.guild
+    embed=discord.Embed(
+        title=f"🌸 Welcome to {guild.name}!",
+        description=(f"Hey {member.mention}, we are so happy to have you here! 💜\n\n"
+                     "**Quick start:**\n"
+                     "1️⃣ Read the server rules\n"
+                     "2️⃣ Say hello and meet everyone\n"
+                     "3️⃣ Type `/help` in the server to see everything I can do\n\n"
+                     "Need help with anything? Just ask in the server chat.\nEnjoy your stay! 🌸"),
+        color=0xff6b9d,
+        timestamp=discord.utils.utcnow())
+    try: embed.set_thumbnail(url=member.display_avatar.url)
+    except Exception: pass
+    if guild.icon:
+        try:
+            embed.set_author(name=guild.name, icon_url=guild.icon.url)
+            embed.set_footer(text=f"Nezu • {guild.name}", icon_url=guild.icon.url)
+        except Exception:
+            embed.set_footer(text=f"Nezu • {guild.name}")
+    else:
+        embed.set_footer(text="Nezu")
+    return embed
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -314,7 +383,12 @@ async def on_member_join(member: discord.Member):
     _vrole=member.guild.get_role(VERIFY_ROLE_ID) if (VERIFY_ROLE_ID and member.guild) else None
     view=VerifyButton() if (REQUIRE_VERIFY and _vrole is not None) else None
     try:
-        await member.send(text, view=view)
+        try:
+            await member.send(embed=_build_welcome_dm_embed(member), view=view)
+        except discord.Forbidden:
+            raise
+        except Exception:
+            await member.send(text, view=view)
         log.info("DM sent -> %s (%s)", member, member.id)
     except discord.Forbidden:
         log.warning("DM blocked by %s", member)
